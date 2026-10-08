@@ -1,0 +1,43 @@
+# =============================================================================
+# spark_app.yaml - ONE SparkApplication template for every tenant/adaptor/step.
+# Placeholder values are filled by dynamic_dag_factory.py from domain.yaml + table.
+# =============================================================================
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: {{ app_name }}                          # unique-ish name (operator adds a random suffix)
+  namespace: {{ namespace }}
+  labels:
+    tenant-id: "{{ label_tenant }}"             # filter pods per tenant: kubectl get pods -l tenant-id=...
+    business-entity-id: "{{ label_business_entity }}"
+    adaptor-id: "{{ label_adaptor }}"
+    step: "{{ label_step }}"
+spec:
+  type: Python
+  pythonVersion: "3"
+  mode: cluster
+  image: {{ image }}
+  imagePullPolicy: Always
+  mainApplicationFile: {{ main_file }}          # PySpark script for this step
+  arguments: {{ args | tojson }}                # --tenant_id ... --business_entity_id ... + job params
+  sparkVersion: "{{ spark_version }}"
+  sparkConf: {{ spark_conf | tojson }}
+  restartPolicy:
+    type: Never                                 # Airflow handles retries
+  dynamicAllocation:                            # executors scale with actual load
+    enabled: true
+    initialExecutors: {{ executor_instances }}
+    minExecutors: {{ min_executors }}
+    maxExecutors: {{ max_executors }}
+  driver:
+    cores: {{ driver_cores }}
+    memory: {{ driver_memory }}
+    serviceAccount: {{ service_account }}
+    labels:
+      tenant-id: "{{ label_tenant }}"
+  executor:
+    instances: {{ executor_instances }}
+    cores: {{ executor_cores }}
+    memory: {{ executor_memory }}
+    labels:
+      tenant-id: "{{ label_tenant }}"

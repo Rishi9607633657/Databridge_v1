@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DataBridge</title>
+<link rel="icon" href="/static/favicon.png" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/vendor/codemirror/codemirror.css">
+<link rel="stylesheet" href="/static/vendor/codemirror/addon/show-hint.css">
+<link rel="stylesheet" href="/static/styles.css">
+<script src="/static/theme.js"></script>
+<script src="/static/layout.js"></script>
+</head>
+<body>
+<div class="app">
+  <nav class="sidebar" aria-label="Primary">
+    <a class="brand" href="#/home" aria-label="DataBridge home">
+      <img src="/static/logo-mark.png" width="34" height="34" alt="">
+      <span class="brand-name">Data<b>Bridge</b></span>
+    </a>
+    <button type="button" class="new-btn" id="new-btn">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New
+    </button>
+    <a class="nav" data-view="home" href="#/home"><span data-icon="home"></span>Home</a>
+    <a class="nav" data-view="workspace" href="#/workspace"><span data-icon="folder"></span>Workspace</a>
+    <a class="nav" data-view="catalog" href="#/catalog"><span data-icon="db"></span>Catalog</a>
+    <a class="nav" data-view="workflows" href="#/workflows"><span data-icon="flow"></span>Workflows</a>
+    <a class="nav" data-view="compute" href="#/compute"><span data-icon="cpu"></span>Compute</a>
+    <a class="nav" data-view="sql" href="#/sql"><span data-icon="term"></span>SQL Editor</a>
+    <a class="nav" data-view="dashboards" href="#/dashboards"><span data-icon="chart"></span>Dashboards</a>
+    <a class="nav" data-view="logs" href="#/logs"><span data-icon="logs"></span>Logs</a>
+    <a class="nav" data-view="admin" href="#/admin"><span data-icon="gear"></span>Admin</a>
+    <div class="grow"></div>
+    <div class="sidebar-foot" id="conn-summary"></div>
+  </nav>
+  <div class="main-col">
+    <header class="topbar">
+      <div class="search" role="search">
+        <span data-icon="search"></span>
+        <input id="search" type="search" aria-label="Search notebooks and tables" placeholder="Search notebooks and tables…" autocomplete="off">
+        <kbd>Ctrl K</kbd>
+        <div class="search-results" id="search-results" hidden></div>
+      </div>
+    </header>
+    <main id="main" tabindex="-1"></main>
+  </div>
+</div>
+<div id="toasts" aria-live="polite"></div>
+
+<script src="/static/vendor/codemirror/codemirror.js"></script>
+<script src="/static/vendor/codemirror/mode/python.js"></script>
+<script src="/static/vendor/codemirror/mode/sql.js"></script>
+<script src="/static/vendor/codemirror/mode/markdown.js"></script>
+<script src="/static/vendor/codemirror/addon/matchbrackets.js"></script>
+<script src="/static/vendor/codemirror/addon/closebrackets.js"></script>
+<script src="/static/vendor/codemirror/addon/show-hint.js"></script>
+<script src="/static/vendor/codemirror/addon/searchcursor.js"></script>
+<script src="/static/vendor/codemirror/addon/comment.js"></script>
+<script src="/static/vendor/codemirror/keymap/sublime.js"></script>
+<script src="/static/vendor/marked.min.js"></script>
+<script src="/static/vendor/purify.min.js"></script>
+<script src="/static/vendor/chart.umd.js"></script>
+<script src="/static/display.js"></script>
+<script src="/static/dora.js"></script>
+<script src="/static/editor_extras.js"></script>
+<script src="/static/notebook_extras.js"></script>
+<script src="/static/auth.js"></script>
+<script src="/static/admin.js"></script>
+<script src="/static/dash_ml.js"></script>
+<script src="/static/dashboards.js"></script>
+<script src="/static/git_ui.js"></script>
+<script src="/static/delta_ui.js"></script>
+<script src="/static/logs.js"></script>
+<script src="/static/airflow_studio.js"></script>
+<script src="/static/ai_chat.js"></script>
+<script src="/static/pipelines.js"></script>
+<script src="/static/jobs.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

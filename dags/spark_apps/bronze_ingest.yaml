@@ -1,0 +1,25 @@
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: bronze-ingest-{{ ts_nodash | lower }}
+  namespace: spark
+spec:
+  type: Python
+  mode: cluster
+  image: <acr>.azurecr.io/<spark-image>:<tag>
+  imagePullPolicy: IfNotPresent
+  mainApplicationFile: local:///app/jobs/bronze_ingest.py
+  sparkVersion: "3.5.1"
+  restartPolicy:
+    type: Never
+  dynamicAllocation:
+    enabled: true
+    minExecutors: 1
+    maxExecutors: 4
+  driver:
+    cores: 1
+    memory: 2g
+    serviceAccount: <spark-service-account>
+  executor:
+    cores: 2
+    memory: 4g

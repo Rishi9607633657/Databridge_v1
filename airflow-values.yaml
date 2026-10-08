@@ -1,0 +1,42 @@
+@'
+executor: CeleryExecutor
+images:
+  airflow:
+    repository: apache/airflow
+    tag: 3.0.6
+dags:
+  gitSync:
+    enabled: false
+  persistence:
+    enabled: true
+    size: 1Gi
+    accessMode: ReadWriteOnce
+    storageClassName: standard
+logs:
+  persistence:
+    enabled: false
+flower:
+  enabled: false
+postgresql:
+  enabled: true
+redis:
+  enabled: true
+scheduler:
+  replicas: 1
+triggerer:
+  replicas: 1
+workers:
+  replicas: 1
+migrateDatabaseJob:
+  useHelmHooks: false
+createUserJob:
+  useHelmHooks: false
+env:
+  - name: AIRFLOW_CONN_KUBERNETES_DEFAULT
+    value: '{"conn_type": "kubernetes", "extra": {"in_cluster": true}}'
+  - name: AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL
+    value: "30"
+'@ | Set-Content -Encoding ascii airflow-values.yaml
+
+helm upgrade airflow apache-airflow/airflow -n airflow --version 1.22.0 -f airflow-values.yaml --timeout 20m
+kubectl get pods -n airflow -w

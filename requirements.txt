@@ -1,0 +1,21 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+jupyter_client>=8.6
+ipykernel>=6.29
+nbformat>=5.10
+httpx>=0.27
+psycopg2-binary>=2.9
+python-dotenv>=1.0
+kubernetes>=29.0
+pandas>=2.0,<3          # pyspark 3.5 is not validated on pandas 3
+numpy<2.3
+# Spark runtime inside the notebook kernel (match your POC versions)
+pyspark>=3.5,<3.6          # your POC uses 3.5.x
+delta-spark==3.1.0        # must match the Delta jars on your cluster
+croniter>=2.0
+tzdata>=2024.1
+setuptools>=70          # provides distutils for pyspark on Python 3.12+
+pyflakes>=3.0            # live error checking in notebooks
+black>=24.0              # Format cell (Python)
+sqlparse>=0.5            # Format cell (%sql)
+psutil>=5.9              # kernel memory + leftover JVM cleanup

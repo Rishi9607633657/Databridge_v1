@@ -1,0 +1,54 @@
+# =============================================================================
+# job_setting/domain.yaml
+# Pipeline settings per adaptor. The table row says WHICH adaptor a tenant uses
+# (adaptor_id), this file says WHAT that adaptor runs (steps + default sizing).
+#
+# Every section (airflow / spark / job) can be overridden from:
+#   table "parameters" column  ->  Airflow UI trigger form / backfill conf
+# (later one wins). Leave the table empty to use the values below.
+# =============================================================================
+
+defaults:                                   # applies to every adaptor unless overridden
+  schedule: "*/5 * * * *"                   # used when table schedule_time is empty (cron, 02:30, 5m, 1h, @daily, manual)
+  airflow:                                  # DAG-level settings
+    retries: 1                              # task retries
+    retry_delay_min: 2                      # minutes between retries
+    max_active_runs: 1                      # never overlap runs of the same tenant
+    catchup: false                          # don't backfill missed intervals
+    timezone: UTC                           # schedule time zone; per tenant via parameters {"airflow": {"timezone": "..."}}
+  spark:                                    # values filled into spark_app.yaml
+    namespace: spark-jobs                   # k8s namespace where Spark pods run
+    image: youracr.azurecr.io/spark-app:latest   # Spark image in ACR
+    spark_version: "3.5.0"                  # must match the image
+    service_account: spark                  # k8s service account for the driver
+    driver_cores: 1
+    driver_memory: 1g
+    executor_instances: 1                   # starting executors
+    executor_cores: 1
+    executor_memory: 2g
+    min_executors: 1                        # dynamic allocation lower bound
+    max_executors: 4                        # dynamic allocation upper bound (autoscale)
+    spark_conf: {}                          # extra spark conf, e.g. {"spark.sql.shuffle.partitions": "8"}
+  job:                                      # passed to the PySpark script as --key value
+    layer: silver
+
+adaptors:                                   # key = adaptor_id from the table
+  toast:
+    steps:                                  # each step = one SparkApplication = one Airflow task
+      - name: bronze_ingest
+        main_file: local:///opt/app/jobs/toast/bronze_ingest.py
+      - name: silver_transform
+        main_file: local:///opt/app/jobs/toast/silver_transform.py
+        depends_on: [bronze_ingest]         # runs after bronze_ingest
+        spark:                              # step-only sizing (table still wins over this)
+          executor_memory: 4g
+
+  powr:
+    job:
+      source_system: powr                   # adaptor-level job arg
+    steps:
+      - name: bronze_ingest
+        main_file: local:///opt/app/jobs/powr/bronze_ingest.py
+      - name: silver_transform
+        main_file: local:///opt/app/jobs/powr/silver_transform.py
+        depends_on: [bronze_ingest]

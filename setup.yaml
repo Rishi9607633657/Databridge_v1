@@ -1,0 +1,23 @@
+﻿apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: spark
+  name: airflow-spark-pod-manager
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "pods/status"]
+  verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: airflow-spark-pod-manager-binding
+  namespace: spark
+subjects:
+- kind: ServiceAccount
+  name: airflow-worker
+  namespace: airflow
+roleRef:
+  kind: Role
+  name: airflow-spark-pod-manager
+  apiGroup: rbac.authorization.k8s.io
