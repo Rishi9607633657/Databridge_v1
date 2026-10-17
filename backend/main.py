@@ -8,7 +8,8 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import admin, airflow, assistant, auth, background, catalog, compute, dag_studio, dash_ai, dash_story, dashboards, delta_ops, editor, git_ops, jobs, logs, pipelines, workspace
+from . import agent, features, datahub, connectors, tts, admin, airflow, assistant, auth, background, catalog, compute, dag_studio, dash_ai, dash_story, dashboards, delta_ops, editor, git_ops, jobs, logs, pipelines, workspace
+from .airbyte import airbyte
 from .kernels import SQL_KEY, SqlError, kernels, run_sql
 from .settings import settings
 
@@ -21,8 +22,16 @@ async def lifespan(_app):
     jobs.manager.startup()
     pipelines.engine.startup()
     reaper = asyncio.create_task(admin.idle_reaper())
+    from .airbyte import auto_land_loop, preload
+    lander = asyncio.create_task(auto_land_loop())
+    asyncio.create_task(preload())                     # connector catalog ready before anyone opens it
+    asyncio.create_task(datahub.prewarm())
+    agent.mark_interrupted()
+    syncer = asyncio.create_task(connectors.scheduler_loop())   # scheduled syncs             # Spark starts in the background, not on the first click
     yield
     reaper.cancel()
+    lander.cancel()
+    syncer.cancel()
     await pipelines.engine.shutdown()
     await jobs.manager.shutdown()
     await kernels.shutdown_all()
@@ -44,6 +53,9 @@ async def auth_middleware(request: Request, call_next):
     ok, code, msg = auth.allowed(user, request.method, path)
     if not ok:
         return JSONResponse({"detail": msg}, status_code=code)
+    off = features.blocked(user, path) if auth.AUTH_ENABLED or user else None
+    if off:
+        return JSONResponse({"detail": f"{features.label(off)} is turned off for your account. Ask your administrator.", "feature": off}, status_code=403)
     request.state.user = user
     resp = await call_next(request)
     if (request.method not in ("GET", "HEAD", "OPTIONS") and user and user["id"] != "__service__"
@@ -73,7 +85,7 @@ def auth_me(request: Request):
 def auth_setup(request: Request, body: dict = Body(...)):
     if auth.user_count() > 0:
         raise HTTPException(409, "Setup is already done — sign in instead")
-    auth.create_user({**body, "role": "admin"}, must_change=False)
+    auth.create_user({**body, "role": "super_admin"}, must_change=False)
     token, user = auth.login(body.get("username"), body.get("password"), request.client.host if request.client else "",
                              request.headers.get("user-agent", ""))
     auth.audit(user["username"], "setup.first_admin", user["username"])
@@ -125,14 +137,30 @@ def auth_token_revoke(request: Request, tid: str):
     return {"ok": True}
 
 
+@app.get("/api/features/me")
+def features_me(request: Request):
+    u = _user(request)
+    return {"role": (u or {}).get("role"), "features": features.effective(u)}
+
+
+@app.get("/api/features")
+def features_get():
+    return {**features.config(), "users_list": [{"username": u["username"], "name": u["name"], "role": u["role"]} for u in auth.list_users()]}
+
+
+@app.put("/api/features")
+def features_put(body: dict = Body(...)):
+    return features.update(body)
+
+
 @app.get("/api/users")
 def users_list():
     return auth.list_users()
 
 
 @app.post("/api/users")
-def users_create(body: dict = Body(...)):
-    return auth.create_user(body, must_change=True)
+def users_create(request: Request, body: dict = Body(...)):
+    return auth.create_user(body, must_change=True, actor=_user(request))
 
 
 @app.put("/api/users/{uid}")
@@ -196,14 +224,14 @@ ROOT_DIRS = ("Shared", "Users", "Repos")
 
 def _who(request: Request):
     u = getattr(request.state, "user", None) or {}
-    return (u.get("username") or "local"), (u.get("role") or "admin")
+    return (u.get("username") or "local"), (u.get("role") or "super_admin")
 
 
 def _ws_guard(request: Request, path: str):
     """Users/<x> and Repos/<x> are private to x (admins see everything)."""
     name, role = _who(request)
     parts = [p for p in (path or "").replace("\\", "/").split("/") if p]
-    if len(parts) >= 2 and parts[0] in ("Users", "Repos") and parts[1] != name and role != "admin":
+    if len(parts) >= 2 and parts[0] in ("Users", "Repos") and parts[1] != name and role not in auth.ADMIN_ROLES:
         raise HTTPException(403, "This folder belongs to another user")
 
 
@@ -219,7 +247,7 @@ def ws_list(request: Request, path: str = ""):
     _ws_guard(request, path)
     data = workspace.list_dir(path)
     clean = path.strip("/")
-    if clean in ("Users", "Repos") and role != "admin":
+    if clean in ("Users", "Repos") and role not in auth.ADMIN_ROLES:
         data["items"] = [i for i in data["items"] if i["name"] == name]
     if not clean:                                            # root: the three special folders first
         order = {d: i for i, d in enumerate(ROOT_DIRS)}
@@ -240,7 +268,7 @@ def ws_list(request: Request, path: str = ""):
 def ws_recent(request: Request):
     name, role = _who(request)
     items = workspace.recent()
-    if role != "admin":
+    if role not in auth.ADMIN_ROLES:
         items = [i for i in items if not (i["path"].split("/")[0] in ("Users", "Repos") and len(i["path"].split("/")) > 1 and i["path"].split("/")[1] != name)]
     return items
 
@@ -582,7 +610,32 @@ async def dash_story_ep(did: str, body: dict = Body(...)):
 @app.post("/api/dashboards/ai/plan")
 async def dash_ai_plan(body: dict = Body(...)):
     """Design a dashboard for review (nothing is saved). body: {prompt, tables?, schema?, use_ai?}"""
-    return await dash_ai.plan(body.get("prompt"), body.get("tables") or [], body.get("use_ai", True) is not False, body.get("schema") or None)
+    return await dash_ai.plan(body.get("prompt"), body.get("tables") or [], body.get("use_ai", True) is not False, body.get("schema") or None,
+                              body.get("context") or None)
+
+
+@app.post("/api/dashboards/ai/model")
+async def dash_ai_model(body: dict = Body(...)):
+    """Tables used, ERD, relationships, domain, saved business context and data checks. body: {prompt?, tables?, schema?}"""
+    return await dash_ai.model(body.get("prompt") or "", body.get("tables") or [], body.get("schema") or None, body.get("context") or None)
+
+
+@app.put("/api/dashboards/ai/context/{key}")
+def dash_ai_context_save(key: str, body: dict = Body(...)):
+    from . import dash_model
+    return dash_model.save_context(key, dash_model.check_ctx_body(body))
+
+
+@app.post("/api/dashboards/{did}/version")
+async def dash_version(did: str):
+    return await asyncio.to_thread(dashboards.data_version, did)
+
+
+@app.post("/api/dashboards/{did}/reconcile")
+async def dash_reconcile(did: str):
+    """Re-run the data model checks (unique keys, orphan keys, totals vs source, custom rules) for a saved dashboard."""
+    d = dashboards.get_dashboard(did)
+    return await dash_ai.reconcile_dashboard(d.get("definition") or {})
 
 
 @app.post("/api/dashboards/ai/create")
@@ -841,6 +894,366 @@ async def sql_cancel():
 
 
 # ---------------- catalog ----------------
+# ---------- Data Hub: file import ----------
+@app.post("/api/datahub/uploads")
+async def dh_upload(request: Request, filename: str):
+    data = await request.body()
+    return datahub.save_upload(filename, data, _who(request)[0])
+
+
+@app.post("/api/datahub/uploads/{uid}/preview")
+async def dh_preview(uid: str, body: dict = Body(default={})):
+    return await asyncio.to_thread(datahub.preview, uid, body or {})
+
+
+@app.post("/api/datahub/uploads/{uid}/load")
+async def dh_load(uid: str, request: Request, body: dict = Body(...)):
+    return await datahub.load(uid, body, _who(request)[0])
+
+
+@app.delete("/api/datahub/uploads/{uid}")
+async def dh_discard(uid: str):
+    return datahub.discard(uid)
+
+
+@app.post("/api/datahub/warm")
+async def dh_warm():
+    return datahub.warm()
+
+
+# ---------- Data Hub: native connections & syncs ----------
+# ---------- presenter voice + saved dashboard themes ----------
+@app.get("/api/tts/status")
+async def tts_status():
+    return await tts.status()
+
+
+@app.post("/api/tts")
+async def tts_speak(text: str = Body(...), voice: str | None = Body(None), rate: int = Body(0)):
+    from fastapi.responses import Response
+    return Response(await tts.speak(text, voice, rate), media_type="audio/mpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+
+@app.get("/api/dashboard-themes")
+async def dash_themes():
+    return tts.themes_list()
+
+
+@app.post("/api/dashboard-themes")
+async def dash_theme_new(request: Request, body: dict = Body(...)):
+    return tts.theme_save(body, _who(request)[0])
+
+
+@app.delete("/api/dashboard-themes/{tid}")
+async def dash_theme_del(tid: str):
+    return tts.theme_delete(tid)
+
+
+@app.get("/api/datahub/connector-types")
+async def dh_types():
+    return connectors.types()
+
+
+@app.get("/api/datahub/icons/{name}")
+async def dh_icon(name: str):
+    from .airbyte import icon
+    return await icon("source", name)
+
+
+@app.get("/api/datahub/connections")
+async def dh_conns():
+    return connectors.list_connections()
+
+
+@app.post("/api/datahub/connections")
+async def dh_conn_new(request: Request, body: dict = Body(...)):
+    return connectors.save_connection(body, None, _who(request)[0])
+
+
+@app.put("/api/datahub/connections/{cid}")
+async def dh_conn_put(cid: str, body: dict = Body(...)):
+    return connectors.save_connection(body, cid)
+
+
+@app.delete("/api/datahub/connections/{cid}")
+async def dh_conn_del(cid: str):
+    return connectors.delete_connection(cid)
+
+
+@app.post("/api/datahub/connections/test")
+async def dh_conn_test_new(body: dict = Body(...)):
+    return await asyncio.to_thread(connectors.test_new, body)
+
+
+@app.post("/api/datahub/connections/{cid}/test")
+async def dh_conn_test(cid: str):
+    return await asyncio.to_thread(connectors.test_saved, cid)
+
+
+@app.get("/api/datahub/connections/{cid}/streams")
+async def dh_conn_streams(cid: str):
+    return await asyncio.to_thread(connectors.streams, cid)
+
+
+@app.get("/api/datahub/connections/{cid}/columns")
+async def dh_conn_columns(cid: str, stream: str):
+    return await asyncio.to_thread(connectors.columns, cid, stream)
+
+
+@app.get("/api/datahub/connections/{cid}/preview")
+async def dh_conn_preview(cid: str, stream: str, nested: str | None = None):
+    return await asyncio.to_thread(connectors.preview, cid, stream, nested)
+
+
+@app.post("/api/datahub/connections/{cid}/transform-preview")
+async def dh_transform_preview(cid: str, body: dict = Body(...)):
+    """Mapping / transformation / dedup of one stream applied to a sample with Spark. body: {stream, nested, transform, mode, keys, cursor}"""
+    return await connectors.transform_preview(cid, body)
+
+
+# ---------- Data Hub: Airbyte connectors run by DataBridge (no Airbyte server) ----------
+@app.get("/api/datahub/airbyte/status")
+async def abl_status():
+    from . import airbyte_local
+    return airbyte_local.status()
+
+
+@app.post("/api/datahub/airbyte/build")
+async def abl_build():
+    """Clone / update the connector definitions from github.com/airbytehq/airbyte and index them (background)."""
+    from . import airbyte_local
+    if airbyte_local._jobs.get("build", {}).get("state") == "running":
+        raise HTTPException(409, "Already building")
+    import threading
+    threading.Thread(target=airbyte_local.build_catalog, daemon=True).start()
+    return {"ok": True}
+
+
+@app.get("/api/datahub/airbyte/catalog")
+async def abl_catalog():
+    from . import airbyte_local
+    cat = airbyte_local.catalog()
+    return [{**c, "ready": airbyte_local.runtime_ready(c)} for c in cat]
+
+
+@app.get("/api/datahub/airbyte/catalog/{cid}/spec")
+async def abl_spec(cid: str):
+    from . import airbyte_local
+    try:
+        return await asyncio.to_thread(airbyte_local.spec, cid)
+    except airbyte_local.AirbyteError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/datahub/airbyte/catalog/{cid}/install")
+async def abl_install(cid: str):
+    from . import airbyte_local
+    airbyte_local.get(cid)
+    import threading
+    threading.Thread(target=airbyte_local.install, args=(cid,), daemon=True).start()
+    return {"ok": True, "job": f"install:{cid}"}
+
+
+@app.get("/api/datahub/airbyte/icons/{cid}")
+async def abl_icon(cid: str):
+    from . import airbyte_local
+    p = airbyte_local.icon_path(cid)
+    if not p:
+        raise HTTPException(404, "No icon")
+    return FileResponse(p, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=604800"})
+
+
+@app.post("/api/datahub/hooks/{token}")
+async def dh_hook(token: str):
+    """Event trigger: start a sync from outside (a POS webhook, a script after a file upload, Airflow…). No sign-in; the token is the secret."""
+    return connectors.run_by_hook(token)
+
+
+@app.get("/api/datahub/syncs")
+async def dh_syncs():
+    return connectors.list_syncs()
+
+
+@app.post("/api/datahub/syncs")
+async def dh_sync_new(request: Request, body: dict = Body(...)):
+    return connectors.save_sync(body, None, _who(request)[0])
+
+
+@app.put("/api/datahub/syncs/{sid}")
+async def dh_sync_put(sid: str, body: dict = Body(...)):
+    return connectors.save_sync(body, sid)
+
+
+@app.delete("/api/datahub/syncs/{sid}")
+async def dh_sync_del(sid: str):
+    return connectors.delete_sync(sid)
+
+
+@app.post("/api/datahub/syncs/{sid}/enabled")
+async def dh_sync_enabled(sid: str, on: bool = Body(..., embed=True)):
+    return connectors.set_enabled(sid, on)
+
+
+@app.post("/api/datahub/syncs/{sid}/run")
+async def dh_sync_run(sid: str, request: Request):
+    return connectors.start_run(sid, "manual", _who(request)[0])
+
+
+@app.get("/api/datahub/syncs/{sid}/runs")
+async def dh_sync_runs(sid: str):
+    return connectors.runs(sid)
+
+
+@app.get("/api/datahub/runs/{rid}")
+async def dh_run(rid: str):
+    return connectors.get_run(rid)
+
+
+# ---------- AI Agent ----------
+@app.get("/api/agent/status")
+async def agent_status():
+    return agent.status()
+
+
+@app.get("/api/agent/runs")
+async def agent_runs():
+    return agent.list_runs()
+
+
+@app.post("/api/agent/runs")
+async def agent_create(request: Request, body: dict = Body(...)):
+    return agent.create_run(body.get("task"), _who(request)[0])
+
+
+@app.get("/api/agent/runs/{rid}")
+async def agent_get(rid: str):
+    return agent.get_run(rid)
+
+
+@app.post("/api/agent/runs/{rid}/approve")
+async def agent_approve(rid: str, request: Request, body: dict = Body(...)):
+    return agent.approve(rid, bool(body.get("approve")), body.get("note"), _who(request)[0])
+
+
+@app.post("/api/agent/runs/{rid}/message")
+async def agent_message(rid: str, request: Request, body: dict = Body(...)):
+    return agent.follow_up(rid, body.get("text"), _who(request)[0])
+
+
+@app.post("/api/agent/runs/{rid}/stop")
+async def agent_stop(rid: str):
+    return agent.stop(rid)
+
+
+@app.delete("/api/agent/runs/{rid}")
+async def agent_delete(rid: str):
+    return agent.delete(rid)
+
+
+@app.get("/api/datahub/imports")
+async def dh_imports():
+    return datahub.history()
+
+
+# ---------- Data Hub: Airbyte connectors ----------
+@app.get("/api/airbyte/status")
+async def ab_status():
+    return airbyte.status()
+
+
+@app.get("/api/airbyte/overview")
+async def ab_overview():
+    return await airbyte.overview()
+
+
+@app.get("/api/airbyte/templates")
+async def ab_templates():
+    from .airbyte import DEST_TEMPLATES, SOURCE_TEMPLATES
+    return {"sources": SOURCE_TEMPLATES, "destinations": DEST_TEMPLATES}
+
+
+@app.get("/api/airbyte/connections/{cid}/jobs")
+async def ab_jobs(cid: str):
+    return await airbyte.jobs(cid)
+
+
+@app.post("/api/airbyte/connections/{cid}/run")
+async def ab_run(cid: str, job_type: str = Body("sync", embed=True)):
+    return await airbyte.run(cid, job_type)
+
+
+@app.post("/api/airbyte/connections/{cid}/status")
+async def ab_set_status(cid: str, active: bool = Body(..., embed=True)):
+    return await airbyte.set_status(cid, active)
+
+
+@app.delete("/api/airbyte/jobs/{job_id}")
+async def ab_cancel(job_id: int):
+    return await airbyte.cancel(job_id)
+
+
+@app.post("/api/airbyte/sources")
+async def ab_new_source(body: dict = Body(...)):
+    return await airbyte.create_source(body)
+
+
+@app.post("/api/airbyte/destinations")
+async def ab_new_dest(body: dict = Body(...)):
+    return await airbyte.create_destination(body)
+
+
+@app.post("/api/airbyte/connections")
+async def ab_new_conn(body: dict = Body(...)):
+    return await airbyte.create_connection(body)
+
+
+@app.get("/api/airbyte/catalog/{kind}")
+async def ab_catalog(kind: str):
+    from .airbyte import connector_catalog
+    return await connector_catalog(kind)
+
+
+@app.get("/api/airbyte/catalog/{kind}/{def_id}")
+async def ab_spec(kind: str, def_id: str):
+    from .airbyte import connector_spec
+    return await connector_spec(kind, def_id)
+
+
+@app.get("/api/airbyte/icons/{kind}/{ctype}")
+async def ab_icon(kind: str, ctype: str):
+    from .airbyte import icon
+    return await icon(kind, ctype)
+
+
+@app.get("/api/airbyte/landing")
+async def ab_landing_all():
+    from .airbyte import landing_summary
+    return landing_summary()
+
+
+@app.get("/api/airbyte/connections/{cid}/landing")
+async def ab_landing_get(cid: str):
+    from .airbyte import landing_get
+    return await landing_get(cid)
+
+
+@app.put("/api/airbyte/connections/{cid}/landing")
+async def ab_landing_put(cid: str, body: dict = Body(...)):
+    from .airbyte import landing_put
+    return landing_put(cid, body)
+
+
+@app.post("/api/airbyte/connections/{cid}/land")
+async def ab_land(cid: str):
+    from .airbyte import land
+    return await land(cid)
+
+
+@app.delete("/api/airbyte/{kind}/{oid}")
+async def ab_delete(kind: str, oid: str):
+    return await airbyte.delete(kind, oid)
+
+
 @app.get("/api/catalog/databases")
 async def cat_dbs():
     return await catalog.databases()
@@ -1059,7 +1472,10 @@ def index():
 def run():
     import uvicorn
     admin.startup_report()
-    uvicorn.run("backend.main:app", host=settings.host, port=settings.port)
+    import os
+    # behind Cloudflare Tunnel / a reverse proxy: trust X-Forwarded-Proto so sign-in cookies are marked Secure on https
+    uvicorn.run("backend.main:app", host=settings.host, port=settings.port, proxy_headers=True,
+                forwarded_allow_ips=os.getenv("FORWARDED_ALLOW_IPS", "127.0.0.1"))
 
 
 if __name__ == "__main__":

@@ -22,7 +22,12 @@ AUTH_ENABLED = (env("AUTH_ENABLED", "true") or "true").lower() != "false"
 SESSION_HOURS = int(env("SESSION_HOURS", "12") or 12)
 COOKIE = "databridge_session"
 INTERNAL_TOKEN = secrets.token_urlsafe(32)   # new every server start; given to kernels only
-ROLES = ("admin", "editor", "viewer")
+ROLES = ("super_admin", "admin", "editor", "viewer")
+ADMIN_ROLES = ("super_admin", "admin")
+
+
+def is_admin(u):
+    return bool(u) and u.get("role") in ADMIN_ROLES
 ITERATIONS = 240_000
 
 store.db.executescript("""
@@ -83,7 +88,9 @@ def list_users():
     return [_public(u) for u in store.q("SELECT * FROM users ORDER BY username COLLATE NOCASE")]
 
 
-def create_user(body, must_change=True):
+def create_user(body, must_change=True, actor=None):
+    if body.get("role") == "super_admin" and actor is not None and actor.get("role") != "super_admin":
+        raise HTTPException(403, "Only a super admin can create another super admin")
     username = (body.get("username") or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9._@-]{3,64}", username):
         raise HTTPException(400, "Username: 3-64 letters, digits, . _ @ -")
@@ -112,15 +119,21 @@ def update_user(uid, body, actor):
     if "role" in body:
         if body["role"] not in ROLES:
             raise HTTPException(400, "Invalid role")
+        if (body["role"] == "super_admin" or u["role"] == "super_admin") and body["role"] != u["role"] and (actor or {}).get("role") != "super_admin":
+            raise HTTPException(403, "Only a super admin can grant or remove super admin")
         fields["role"] = body["role"]
+    if u["role"] == "super_admin" and (actor or {}).get("role") != "super_admin" and set(body) - {"name", "email"}:
+        raise HTTPException(403, "Only a super admin can change a super admin account")
     if "active" in body:
         fields["active"] = 1 if body["active"] else 0
     if body.get("password"):
         _check_password(body["password"])
         fields["password_hash"] = hash_password(body["password"])
         fields["must_change"] = 1
-    demoting = fields.get("role", u["role"]) != "admin" or fields.get("active", u["active"]) == 0
-    if u["role"] == "admin" and demoting and _admins() <= 1:
+    if u["role"] == "super_admin" and (fields.get("role", "super_admin") != "super_admin" or fields.get("active", 1) == 0) and _supers() <= 1:
+        raise HTTPException(409, "You can't remove the last super admin")
+    demoting = fields.get("role", u["role"]) not in ADMIN_ROLES or fields.get("active", u["active"]) == 0
+    if u["role"] in ADMIN_ROLES and demoting and _admins() <= 1:
         raise HTTPException(409, "You can't remove the last active admin")
     if fields:
         store.update("users", uid, **fields)
@@ -135,7 +148,11 @@ def delete_user(uid, actor):
         raise HTTPException(404, "User not found")
     if u["id"] == actor["id"]:
         raise HTTPException(409, "You can't delete yourself")
-    if u["role"] == "admin" and _admins() <= 1:
+    if u["role"] == "super_admin" and (actor or {}).get("role") != "super_admin":
+        raise HTTPException(403, "Only a super admin can delete a super admin")
+    if u["role"] == "super_admin" and _supers() <= 1:
+        raise HTTPException(409, "You can't delete the last super admin")
+    if u["role"] in ADMIN_ROLES and _admins() <= 1:
         raise HTTPException(409, "You can't delete the last admin")
     for t in ("sessions", "api_tokens"):
         store.x(f"DELETE FROM {t} WHERE user_id=?", (uid,))
@@ -144,7 +161,22 @@ def delete_user(uid, actor):
 
 
 def _admins():
-    return store.one("SELECT COUNT(*) AS n FROM users WHERE role='admin' AND active=1")["n"]
+    return store.one("SELECT COUNT(*) AS n FROM users WHERE role IN ('admin','super_admin') AND active=1")["n"]
+
+
+def _supers():
+    return store.one("SELECT COUNT(*) AS n FROM users WHERE role='super_admin' AND active=1")["n"]
+
+
+def ensure_super_admin():
+    """Existing installs: promote the oldest active admin to super_admin if none exists."""
+    if _supers() == 0:
+        u = store.one("SELECT id FROM users WHERE role='admin' AND active=1 ORDER BY created LIMIT 1")
+        if u:
+            store.update("users", u["id"], role="super_admin")
+
+
+ensure_super_admin()
 
 
 def change_own_password(user, current, new):
@@ -184,7 +216,7 @@ def logout(token):
 
 
 SERVICE_USER = {"id": "__service__", "username": "system", "name": "DataBridge (kernels)", "role": "admin", "active": 1}
-LOCAL_ADMIN = {"id": "__local__", "username": "local", "name": "Local (auth off)", "role": "admin", "active": 1}
+LOCAL_ADMIN = {"id": "__local__", "username": "local", "name": "Local (auth off)", "role": "super_admin", "active": 1}
 
 
 def resolve(cookie_token=None, bearer=None):
@@ -226,14 +258,17 @@ def list_tokens(user):
 
 
 def revoke_token(user, tid):
-    store.x("DELETE FROM api_tokens WHERE id=? AND (user_id=? OR ?='admin')", (tid, user["id"], user["role"]))
+    store.x("DELETE FROM api_tokens WHERE id=? AND (user_id=? OR ?='admin')", (tid, user["id"], "admin" if user["role"] in ADMIN_ROLES else user["role"]))
 
 
 # ------------------------------------------------------------------ authorisation policy
-PUBLIC = (re.compile(r"^/api/auth/(me|login|setup|logout)$"),)
+PUBLIC = (re.compile(r"^/api/auth/(me|login|setup|logout)$"), re.compile(r"^/api/datahub/hooks/[A-Za-z0-9_-]{20,}$"))
 ADMIN_ONLY = re.compile(r"^/api/(admin/|users|audit)")
 ADMIN_WRITE = re.compile(r"^/api/linked-services")        # editors may read/use, only admins change connections
-VIEWER_POST_OK = re.compile(r"^/api/(auth/(password|tokens)|dora/chat|linked-services/test$|dashboards/[^/]+/(query|options)$)")
+VIEWER_POST_OK = re.compile(r"^/api/(auth/(password|tokens)|dora/chat|linked-services/test$|dashboards/[^/]+/(query|options|story|reconcile|version)$|tts$)")
+
+
+SUPER_ONLY = re.compile(r"^/api/(features|super)(/|$)")
 
 
 def allowed(user, method, path):
@@ -243,7 +278,9 @@ def allowed(user, method, path):
     if user is None:
         return False, 401, "Sign in required"
     role = user["role"]
-    if role == "admin":
+    if SUPER_ONLY.match(path) and not (method == "GET" and path == "/api/features/me"):
+        return (True, 200, "") if role == "super_admin" else (False, 403, "Super admins only")
+    if role in ADMIN_ROLES:
         return True, 200, ""
     if ADMIN_ONLY.match(path) and not path.startswith("/api/admin/health"):
         return False, 403, "Admins only"

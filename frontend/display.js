@@ -16,6 +16,65 @@ function dtFmt(v) {
   if (typeof v === 'object') return JSON.stringify(v);
   return String(v);
 }
+/* Nested values (STRUCT / ARRAY / MAP) as an expandable tree, like Databricks: ▸ {3 fields} / ▸ [5 items] */
+function dtTree(v, depth = 0) {
+  if (v === null || v === undefined) return el('span', { class: 'dt-null' }, 'null');
+  if (typeof v !== 'object') {
+    return el('span', { class: `dt-leaf ${typeof v === 'number' ? 'n' : typeof v === 'boolean' ? 'b' : 's'}` }, typeof v === 'string' ? `"${v.length > 300 ? `${v.slice(0, 300)}…` : v}"` : String(v));
+  }
+  const arr = Array.isArray(v);
+  const keys = arr ? v.map((_, i) => i) : Object.keys(v);
+  const peek = arr ? `[${keys.length} item${keys.length === 1 ? '' : 's'}]` : `{${keys.slice(0, 3).join(', ')}${keys.length > 3 ? ', …' : ''}}`;
+  const d = el('details', { class: 'dt-tree' }, el('summary', { title: arr ? 'Array — click to expand' : 'Object (struct) — click to expand' }, el('span', { class: 'dt-tree-k' }, arr ? 'array' : 'object'), ' ', peek));
+  let built = false;
+  d.addEventListener('toggle', (e) => {
+    e.stopPropagation();
+    if (!d.open || built) return;
+    built = true;
+    const box = el('div', { class: 'dt-tree-body' });
+    keys.slice(0, 500).forEach((k) => box.append(el('div', { class: 'dt-tree-row' }, el('span', { class: 'dt-tree-key' }, arr ? `${k}` : k), el('span', { class: 'dt-tree-val' }, dtTree(v[k], depth + 1)))));
+    if (keys.length > 500) box.append(el('div', { class: 'muted small' }, `… ${keys.length - 500} more`));
+    d.append(box);
+  });
+  d.addEventListener('click', (e) => e.stopPropagation());
+  return d;
+}
+/* Spark type string -> expandable schema tree: struct<a:int,b:struct<c:string>>, array<...>, map<k,v> */
+function dtParseType(t) {
+  let i = 0;
+  const peek = () => t[i];
+  function name() { const m = /^[^:<>,]+/.exec(t.slice(i)); i += m ? m[0].length : 0; return m ? m[0].trim() : ''; }
+  function type() {
+    const base = name();
+    if (peek() !== '<') return { t: base };
+    i++;                                                    // <
+    if (base === 'struct') {
+      const fields = [];
+      while (i < t.length && peek() !== '>') {
+        const n = name().replace(/^`|`$/g, '');
+        if (peek() === ':') i++;
+        fields.push({ name: n, ...type() });
+        if (peek() === ',') i++;
+      }
+      i++;
+      return { t: 'struct', fields };
+    }
+    if (base === 'map') { const k = type(); if (peek() === ',') i++; const v = type(); i++; return { t: 'map', key: k, value: v }; }
+    const el0 = type(); i++;                                // array<...>
+    return { t: base, element: el0 };
+  }
+  try { return type(); } catch { return { t }; }
+}
+function dtTypeTree(typeStr) {
+  const label = (n) => (n.t === 'struct' ? `struct (${n.fields.length} fields)` : n.t === 'array' ? `array<${n.element.t}>` : n.t === 'map' ? `map<${n.key.t}, ${n.value.t}>` : n.t);
+  const node = (n) => {
+    if (n.t !== 'struct' && n.t !== 'array' && n.t !== 'map') return el('span', { class: 'dt-type-leaf' }, n.t);
+    const kids = n.t === 'struct' ? n.fields.map((f) => [f.name, f]) : n.t === 'array' ? [['element', n.element]] : [['key', n.key], ['value', n.value]];
+    return el('details', { class: 'dt-tree dt-type' }, el('summary', {}, label(n)),
+      el('div', { class: 'dt-tree-body' }, kids.map(([k, f]) => el('div', { class: 'dt-tree-row' }, el('span', { class: 'dt-tree-key' }, k), el('span', { class: 'dt-tree-val' }, node(f))))));
+  };
+  return node(dtParseType(String(typeStr || '')));
+}
 function dtShort(v) {
   if (!dtNum(v)) return dtFmt(v) ?? '—';
   const a = Math.abs(v);
@@ -523,8 +582,11 @@ function renderTableOutput(payload, meta = {}, onChange = null) {
           const v0 = r[p.i];
           const t = p.role === 'id' && v0 != null ? String(v0) : dtFmt(v0);      // IDs/codes without thousands separators
           td.className = `k-${p.kind}${t === null ? ' null' : ''}`;
-          td.textContent = t === null ? 'null' : t;
-          if (t && t.length > 30) td.title = t;
+          if (v0 !== null && typeof v0 === 'object') { td.classList.add('k-nested'); td.append(dtTree(v0)); }
+          else {
+            td.textContent = t === null ? 'null' : t;
+            if (t && t.length > 30) td.title = t;
+          }
           tr.append(td);
         });
         frag.append(tr);

@@ -122,6 +122,8 @@ async function viewWorkflows(main, r) {
   let sub = r.params.get('sub') || '';
   if (tab === 'dag-studio') { tab = 'airflow'; sub = 'studio'; }          // older links
   if (tab === 'airflow-ui') { tab = 'airflow'; sub = 'ui'; }
+  const featOf = (t) => (t === 'notebook-runs' ? 'jobs' : t);
+  if (!dbFeat(featOf(tab))) tab = ['jobs', 'airflow', 'pipelines'].find(dbFeat) || tab;
   const SUBS = {
     airflow: [['dags', 'DAGs'], ['studio', 'DAG studio'], ['ui', 'Airflow UI']],
     pipelines: [['pipelines', 'Pipelines'], ['runs', 'Monitor'], ['linked', 'Linked services']],
@@ -129,7 +131,7 @@ async function viewWorkflows(main, r) {
   if (SUBS[tab] && !SUBS[tab].some(([k]) => k === sub)) sub = SUBS[tab][0][0];
   const go = (t, s2) => { location.hash = t === 'jobs' ? '#/workflows' : `#/workflows?tab=${t}${s2 ? `&sub=${s2}` : ''}`; };
   const tabs = el('div', { class: 'tabs', role: 'tablist', style: { marginTop: 0 } },
-    [['jobs', 'Jobs'], ['notebook-runs', 'Notebook runs'], ['airflow', 'Airflow'], ['pipelines', 'Pipelines']].map(([k, label]) => el('button', { type: 'button', role: 'tab',
+    [['jobs', 'Jobs'], ['notebook-runs', 'Notebook runs'], ['airflow', 'Airflow'], ['pipelines', 'Pipelines']].filter(([k]) => dbFeat(k === 'notebook-runs' ? 'jobs' : k)).map(([k, label]) => el('button', { type: 'button', role: 'tab',
       'aria-selected': String(tab === k), onClick: () => go(k) }, label)));
   const subTabs = SUBS[tab] ? el('div', { class: 'subtabs', role: 'tablist', 'aria-label': `${tab} views` },
     SUBS[tab].map(([k, label]) => el('button', { type: 'button', role: 'tab', 'aria-selected': String(sub === k), onClick: () => go(tab, k) }, label))) : null;

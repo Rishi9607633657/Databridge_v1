@@ -62,6 +62,9 @@ const ICONS = {
   fold: '<path d="M4 6h16M4 12h10M4 18h6"/>',
   format: '<path d="M4 7h10M4 12h16M4 17h7M17 15l2 2 3-4"/>', list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
   vars: '<path d="M8 4c-2 0-3 1-3 3v2c0 1-1 2-2 3 1 1 2 2 2 3v2c0 2 1 3 3 3M16 4c2 0 3 1 3 3v2c0 1 1 2 2 3-1 1-2 2-2 3v2c0 2-1 3-3 3"/>',
+  upload: '<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>',
+  bot: '<rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4M9 13h.01M15 13h.01M9 17h6"/>',
+  hub: '<circle cx="12" cy="12" r="3"/><circle cx="4" cy="6" r="2"/><circle cx="20" cy="6" r="2"/><circle cx="4" cy="18" r="2"/><circle cx="20" cy="18" r="2"/><path d="M6 7l3.5 3M18 7l-3.5 3M6 17l3.5-3M18 17l-3.5-3"/>',
   history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2"/>', key: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
 };
 function icon(name, size = 18) {
@@ -368,7 +371,7 @@ function renderOutput(o, ctx = {}) {
       el('div', { class: 'err-head' }, el('span', { class: 'err-name' }, o.ename || 'Error'),
         el('span', { class: 'err-msg' }, String(o.evalue || '').split('\n')[0]),
         line != null && ctx.onErrorLine ? el('button', { type: 'button', class: 'err-line-btn', onClick: () => ctx.onErrorLine(line) }, `Go to line ${line + 1}`) : null,
-        ctx.onDora ? el('button', { type: 'button', class: 'err-dora-btn', onClick: () => ctx.onDora() }, doraIcon(), 'Fix with Dora') : null),
+        ctx.onDora && dbFeat('ai_assistant') ? el('button', { type: 'button', class: 'err-dora-btn', onClick: () => ctx.onDora() }, doraIcon(), 'Fix with Dora') : null),
       tb ? el('pre', { class: 'err' }, tb) : null);
   }
   const d = o.data || {};
@@ -461,7 +464,7 @@ async function viewNotebook(main, r) {
       btn('', () => { S.cells.forEach((c) => { c.outputs = []; c.count = null; updateCount(c); renderOutputs(c); }); markDirty(); }, { cls: 'ghost icon sm', ic: 'eraser', title: 'Clear all outputs' })),
     kbadge,
     btn('Schedule', () => (location.hash = `#/jobedit/new?notebook=${enc(path)}`), { cls: 'sm', ic: 'flow', title: 'Create a job that runs this notebook' }),
-    el('button', { type: 'button', class: 'btn sm dora-btn', title: 'Dora — AI assistant', onClick: () => side.show('dora') }, doraIcon(), 'Dora'),
+    dbFeat('ai_assistant') ? el('button', { type: 'button', class: 'btn sm dora-btn', title: 'Dora — AI assistant', onClick: () => side.show('dora') }, doraIcon(), 'Dora') : null,
     el('span', { class: 'nb-grp' },
       btn('', () => side.show('toc'), { cls: 'ghost icon sm', ic: 'list', title: 'Table of contents' }),
       btn('', () => side.show('vars'), { cls: 'ghost icon sm', ic: 'vars', title: 'Variable explorer' }),
@@ -1055,7 +1058,7 @@ async function viewCatalog(main, r) {
       btn('Query', () => openInSql(`SELECT *\nFROM ${fq}\nLIMIT 100`), { cls: 'primary', ic: 'term' }),
       btn('Drop', drop, { cls: 'danger', ic: 'trash' })));
 
-    const tabs = ['Columns', 'Sample data', 'Profile (EDA)', 'History & time travel', 'Maintenance', 'Details', 'DDL'];
+    const tabs = ['Columns', 'Sample data', 'Profile (EDA)', 'History & time travel', 'Maintenance', 'Details', 'DDL'].filter((x) => x !== 'Maintenance' || dbFeat('delta_maintenance'));
     const kindOf = (ty) => (/^(tinyint|smallint|int|integer|bigint|long|short|float|double|real|decimal|number)/i.test(ty || '') ? 'num' : /^(date|timestamp)/i.test(ty || '') ? 'date' : /^bool/i.test(ty || '') ? 'bool' : 'text');
     const badge = (ty) => { const k = kindOf(ty); return el('span', { class: `dt-type k-${k}` }, k === 'num' ? '123' : k === 'date' ? 'DATE' : k === 'bool' ? 'T/F' : 'Abc'); };
     const tabBar = el('div', { class: 'tabs', role: 'tablist' });
@@ -1072,7 +1075,7 @@ async function viewCatalog(main, r) {
           tb.replaceChildren(...t.columns.filter((c) => !f || c.name.toLowerCase().includes(f) || (c.type || '').toLowerCase().includes(f)).map((c, i) => el('tr', {},
             el('td', { class: 'muted cat-num' }, String(i + 1)),
             el('td', {}, el('span', { class: 'cat-col' }, badge(c.type), c.name), parts.has(c.name) ? el('span', { class: 'chip', style: { marginLeft: '8px' } }, 'partition') : null),
-            el('td', { class: 'cat-type' }, c.type), el('td', { class: 'muted' }, c.nullable ? 'Yes' : 'No'), el('td', { class: 'muted' }, c.comment || '')))); };
+            el('td', { class: 'cat-type' }, /^(struct|array|map)</.test(c.type || '') && typeof dtTypeTree === 'function' ? dtTypeTree(c.type) : c.type), el('td', { class: 'muted' }, c.nullable ? 'Yes' : 'No'), el('td', { class: 'muted' }, c.comment || '')))); };
         q.addEventListener('input', drawCols); drawCols();
         const counts = { num: 0, text: 0, date: 0, bool: 0 }; t.columns.forEach((c) => { counts[kindOf(c.type)]++; });
         pane.append(el('section', { class: 'panel' }, el('div', { class: 'panel-head' },
@@ -1506,7 +1509,7 @@ let STATUS = {};
 let cleanup = null;
 const ROUTES = { home: viewHome, workspace: viewWorkspace, notebook: viewNotebook, catalog: viewCatalog,
   workflows: viewWorkflows, workflow: viewWorkflow, compute: viewCompute, sql: viewSql,
-  job: viewJob, jobedit: viewJobEdit, run: viewRun, pipelines: viewPipelines, pipeline: viewPipeline, prun: viewPipelineRun, admin: viewAdmin, dashboards: viewDashboards, dashboard: viewDashboard, logs: viewLogs, airflow: viewAirflow };
+  job: viewJob, jobedit: viewJobEdit, run: viewRun, pipelines: viewPipelines, pipeline: viewPipeline, prun: viewPipelineRun, admin: viewAdmin, dashboards: viewDashboards, dashboard: viewDashboard, logs: viewLogs, airflow: viewAirflow, datahub: viewDataHub, agent: viewAgent };
 const NAV_FOR = { notebook: 'workspace', workflow: 'workflows', job: 'workflows', jobedit: 'workflows', run: 'workflows', pipeline: 'workflows', prun: 'workflows', pipelines: 'workflows', dashboard: 'dashboards', airflow: 'workflows' };
 
 function parseHash() {
@@ -1528,6 +1531,8 @@ async function render() {
   main.className = '';
   main.replaceChildren();
   main.scrollTop = 0;
+  const blockedPage = featureGate(view);
+  if (blockedPage) { main.append(blockedPage); return; }
   try { cleanup = (await ROUTES[view](main, r)) || null; }
   catch (e) { main.replaceChildren(errBox(e)); }
 }
@@ -1578,7 +1583,8 @@ async function boot() {
   document.querySelectorAll('[data-icon]').forEach((s) => s.replaceWith(icon(s.dataset.icon)));
   await authGate();
   document.body.classList.toggle('role-viewer', !!CURRENT_USER && CURRENT_USER.role === 'viewer');
-  if (CURRENT_USER && CURRENT_USER.role !== 'admin') document.querySelectorAll('.nav[data-view="admin"]').forEach((n) => n.remove());
+  if (CURRENT_USER && !['admin', 'super_admin'].includes(CURRENT_USER.role)) document.querySelectorAll('.nav[data-view="admin"]').forEach((n) => n.remove());
+  await loadFeatures();
   const chip = authUserChip();
   if (chip) $('#conn-summary').before(chip);
   if (CURRENT_USER && CURRENT_USER.must_change) authAccountDialog(true);

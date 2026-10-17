@@ -13,6 +13,7 @@ from datetime import date
 
 from fastapi import HTTPException
 
+from . import fastsql
 from .jobs import store
 from .kernels import SqlError, run_sql
 
@@ -139,13 +140,13 @@ async def query(did, dataset_id, params, force=False, sql_override=None):
     if hit and not force and _now() - hit[0] < ttl:
         return {**hit[1], "cached": True, "cachedAt": hit[0]}
     try:
-        res = await asyncio.wait_for(run_sql(sql, MAX_ROWS, key=DASH_KERNEL, label="Dashboards"), 600)
+        res = await fastsql.query(sql, MAX_ROWS, lambda: asyncio.wait_for(run_sql(sql, MAX_ROWS, key=DASH_KERNEL, label="Dashboards"), 600))
     except SqlError as e:
         raise HTTPException(400, f"{e.ename}: {str(e.evalue)[:600]}")
     except asyncio.TimeoutError:
         raise HTTPException(504, "The query took longer than 10 minutes")
     out = {"columns": res["columns"], "rows": res["rows"], "truncated": res.get("truncated", False),
-           "elapsed": res.get("elapsed"), "params": used}
+           "elapsed": res.get("elapsed"), "params": used, "engine": res.get("engine", "spark")}
     if len(CACHE) > CACHE_LIMIT:
         for k in sorted(CACHE, key=lambda k: CACHE[k][0])[: CACHE_LIMIT // 4]:
             CACHE.pop(k, None)
@@ -163,7 +164,32 @@ async def filter_options(did, dataset_id, column):
     base = render_sql(ds["sql"], {})
     sql = f"SELECT DISTINCT `{column}` AS v FROM ({base}) _src WHERE `{column}` IS NOT NULL ORDER BY 1 LIMIT 500"
     try:
-        res = await asyncio.wait_for(run_sql(sql, 500, key=DASH_KERNEL, label="Dashboards"), 300)
+        res = await fastsql.query(sql, 500, lambda: asyncio.wait_for(run_sql(sql, 500, key=DASH_KERNEL, label="Dashboards"), 300))
     except SqlError as e:
         raise HTTPException(400, f"{e.ename}: {str(e.evalue)[:400]}")
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "Spark is busy — filter values timed out. Try again in a moment.")
     return [r[0] for r in res["rows"]]
+
+
+_TBL_RE = re.compile(r"\b(?:from|join)\s+((?:`[^`]+`|[A-Za-z_]\w*)(?:\s*\.\s*(?:`[^`]+`|[A-Za-z_]\w*))?)", re.I)
+
+
+def data_version(did):
+    """A fingerprint of the data behind a dashboard: table file stamps (Delta log / Parquet files) + the latest finished sync.
+    Dashboards in 'Live' mode poll this every few seconds and reload only when it changes."""
+    import hashlib
+    from . import connectors, fastsql
+    d = get_dashboard(did)
+    parts = set()
+    for ds in (d.get("definition") or {}).get("datasets") or []:
+        for m in _TBL_RE.finditer(ds.get("sql") or ""):
+            names = [x.strip().strip("`") for x in m.group(1).split(".")]
+            if len(names) == 1 and names[0].lower() in ("select", "values", "lateral", "unnest", "range"):
+                continue
+            schema, table = (names[0], names[1]) if len(names) == 2 else ("default", names[0])
+            loc = fastsql._location(schema, table)
+            parts.add(f"{schema}.{table}:{fastsql._stamp(loc) if loc else '-'}")
+    last = max((r.get("ended") or 0 for r in connectors.runs(None, 100) if r.get("status") in ("succeeded", "partial")), default=0)
+    parts.add(f"sync:{last}")
+    return {"version": hashlib.md5("|".join(sorted(parts)).encode()).hexdigest(), "tables": len(parts) - 1}

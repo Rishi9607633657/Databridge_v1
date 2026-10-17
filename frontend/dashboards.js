@@ -14,7 +14,7 @@ if (typeof DB_THEMES !== 'undefined') {
   DB_THEMES.neon = ['#3DD9EB', '#7C83FD', '#F7B32B', '#FF6B9A', '#2EE59D', '#A78BFA', '#FB923C', '#38BDF8', '#C4F042', '#F87171'];
   DB_THEMES.aurora = ['#7B3FE4', '#C056D8', '#E879A6', '#5B6CF0', '#22B8CF', '#9D4EDD', '#F59E0B', '#14B8A6', '#6366F1', '#EC4899'];
 }
-const DB_KPI_STYLES = { tinted: 'Tinted card + mini bars', gradient: 'Colour tiles', gauge: 'Gauge', spark: 'Number + sparkline' };
+const DB_KPI_STYLES = { tinted: 'Tinted card + mini bars', gradient: 'Colour tiles', gauge: 'Gauge', spark: 'Number + sparkline', ring: 'Progress ring', minimal: 'Big number (minimal)', accent: 'Accent bar' };
 function gaugeSvg(ratio, color) {
   const a = Math.PI * (1 - ratio), x = 60 + 48 * Math.cos(a), y = 60 - 48 * Math.sin(a);
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -157,7 +157,7 @@ function dbAggregate(cols, rows, w) {
 async function viewDashboards(main) {
   const canEdit = !CURRENT_USER || CURRENT_USER.role !== 'viewer';
   main.append(el('div', { class: 'page-head' }, el('h1', { class: 'grow' }, 'Dashboards'),
-    canEdit ? btn('Build with AI', () => dbAiDialog(), { ic: 'flow', title: 'Describe a dashboard in one prompt' }) : null,
+    canEdit && dbFeat('dashboards_ai') ? btn('Build with AI', () => dbAiDialog(), { ic: 'flow', title: 'Describe a dashboard in one prompt' }) : null,
     canEdit ? btn('New dashboard', () => dbNewDialog(), { cls: 'primary', ic: 'plus' }) : null));
   const panel = el('section', { class: 'panel' }, loading());
   main.append(panel);
@@ -197,7 +197,7 @@ async function dbAiDialog(opts = {}) {
   if (schema && !opts.tables) meta.tables.filter((t) => t.startsWith(`${schema}.`)).forEach((t) => chosen.add(t));
   await openDialog((close) => {
     const root = el('div', { class: 'dlg ai-dlg' });
-    let prompt = opts.prompt || '', useAi = true, plan = null;
+    let prompt = opts.prompt || '', useAi = true, plan = null, model = null;
     const step1 = () => {
       const ta = el('textarea', { class: 'field ai-prompt', rows: 8, placeholder: 'What should the dashboard help you decide? Mention KPIs, charts, filters or pages you want — anything you leave out, AI decides.' }, prompt);
       ta.addEventListener('input', () => { prompt = ta.value; });
@@ -218,20 +218,20 @@ async function dbAiDialog(opts = {}) {
       search.addEventListener('input', drawTables); drawTables();
       const ai = el('input', { type: 'checkbox', checked: useAi, onChange: (e) => { useAi = e.target.checked; } });
       const status = el('div', { class: 'ai-status', role: 'status', 'aria-live': 'polite' });
-      const go = btn('Design dashboard', async () => {
+      const go = btn('Next: data model', async () => {
         go.disabled = true;
-        const steps = ['Reading the schema…', 'Profiling columns and values…', 'Finding relationships between tables…', 'Designing datasets…', 'Choosing KPIs and charts…', 'Checking every query…', 'Laying it out…'];
+        const steps = ['Reading the schema…', 'Profiling columns and values…', 'Finding relationships between tables…', 'Checking keys and totals…'];
         let k = 0; status.className = 'ai-status busy'; status.textContent = steps[0];
-        const timer = setInterval(() => { k = Math.min(k + 1, steps.length - 1); status.textContent = steps[k]; }, 2200);
+        const timer = setInterval(() => { k = Math.min(k + 1, steps.length - 1); status.textContent = steps[k]; }, 1800);
         try {
-          plan = await api('/api/dashboards/ai/plan', { method: 'POST', body: { prompt, tables: [...chosen], schema: chosen.size ? null : schema || null, use_ai: useAi } });
-          plan.keep = new Set(plan.definition.widgets.map((w) => w.id));
-          clearInterval(timer); step2();
+          model = await api('/api/dashboards/ai/model', { method: 'POST', body: { prompt, tables: [...chosen], schema: chosen.size ? null : schema || null } });
+          model.metrics = model.metrics || []; model.rules = model.rules || [];
+          clearInterval(timer); stepModel();
         } catch (e) { clearInterval(timer); status.className = 'ai-status err'; status.textContent = e.message; go.disabled = false; }
       }, { cls: 'primary', ic: 'flow' });
       root.replaceChildren(
-        el('div', { class: 'row' }, el('h2', { class: 'grow' }, 'Build a dashboard with AI'), el('span', { class: 'ai-steps' }, el('b', {}, '1 Describe'), ' › 2 Review › 3 Create'), btn('Close', () => close(null), { cls: 'sm' })),
-        el('p', { class: 'muted' }, 'Pick a schema (or tables). AI reads every column, finds relationships, designs datasets, and proposes KPIs, charts and filters — you review before anything is created.'),
+        el('div', { class: 'row' }, el('h2', { class: 'grow' }, 'Build a dashboard with AI'), el('span', { class: 'ai-steps' }, el('b', {}, '1 Describe'), ' › 2 Data model › 3 Review › 4 Create'), btn('Close', () => close(null), { cls: 'sm' })),
+        el('p', { class: 'muted' }, 'Pick a schema (or tables). Next you check the data model (ERD, joins, business context, reconciliation), then AI designs the dashboard — you review before anything is created.'),
         el('div', { class: 'ai-grid' },
           el('div', { class: 'stack', style: { gap: '8px' } }, ta,
             el('div', { class: 'row', style: { gap: '6px', flexWrap: 'wrap' } },
@@ -241,6 +241,67 @@ async function dbAiDialog(opts = {}) {
         el('label', { class: 'switch' }, ai, 'Use AI (Dora) — off uses the built-in designer, no AI key needed'),
         status, el('div', { class: 'actions' }, go));
       setTimeout(() => ta.focus(), 0);
+    };
+    const stepModel = () => {
+      const M = model;
+      const erdBox = el('div', { class: 'dbm-erd' });
+      const drawErd = () => {
+        const rels = M.relationships.filter((r) => !r.removed);
+        erdBox.replaceChildren(dbErd({ tables: M.erd.tables, relationships: rels }, {}));
+      };
+      drawErd();
+      const domSel = el('select', { class: 'field', 'aria-label': 'Business domain' }, M.domains.map((d) => el('option', { value: d.id, selected: d.id === M.domain },
+        d.id === 'auto' ? `Detect automatically (looks like: ${(M.domains.find((x) => x.id === M.detected_domain) || {}).label || M.detected_domain})` : d.label)));
+      const density = el('select', { class: 'field', 'aria-label': 'Dashboard size' },
+        [['compact', 'Compact — one screen, 4 KPIs + 4 charts'], ['standard', 'Standard — 6 KPIs + 6–9 charts + details'], ['detailed', 'Detailed — overview + a page per angle (more charts)']]
+          .map(([k, t]) => el('option', { value: k, selected: k === (M.density || 'standard') }, t)));
+      const ctxTa = el('textarea', { class: 'field dbm-ctx', rows: 6, placeholder: 'Explain the business in a few lines: what each table is, what “good” looks like, special rules.\nExample: “6 outlets in Pune/Mumbai. Swiggy and Zomato orders carry a 25% commission. A void is a cancelled check. Week starts Monday. Target average check ₹450.”' }, M.context || '');
+      const checksBox = el('div', {}, dbChecks(M.checks), M.warnings && M.warnings.length ? el('ul', { class: 'ai-warn' }, M.warnings.map((x) => el('li', {}, x))) : null);
+      const ctxBody = () => ({ domain: domSel.value, density: density.value, context: ctxTa.value.trim(),
+        metrics: M.metrics.filter((m) => m.name.trim() && m.definition.trim()), rules: M.rules.filter((r) => r.name.trim() && r.left.trim()),
+        relationships: M.relationships.map((r) => ({ from: r.from, to: r.to, on: r.on, source: r.source, removed: !!r.removed })) });
+      const recheck = btn('Re-run checks', async () => {
+        recheck.disabled = true; checksBox.replaceChildren(loading('Checking…'));
+        try {
+          const m2 = await api('/api/dashboards/ai/model', { method: 'POST', body: { prompt, tables: M.tables, context: ctxBody() } });
+          M.checks = m2.checks; M.summary = m2.summary; sumEl.replaceChildren(dbChecksSummary(M.summary) || '');
+          checksBox.replaceChildren(dbChecks(M.checks));
+        } catch (e) { checksBox.replaceChildren(errBox(e)); }
+        recheck.disabled = false;
+      }, { cls: 'sm', ic: 'refresh' });
+      const sumEl = el('span', {}, dbChecksSummary(M.summary));
+      const status = el('div', { class: 'ai-status', role: 'status', 'aria-live': 'polite' });
+      const ai = el('input', { type: 'checkbox', checked: useAi, onChange: (e) => { useAi = e.target.checked; } });
+      const go = btn('Design dashboard', async () => {
+        go.disabled = true;
+        const steps = ['Using your business context…', 'Designing datasets with the verified joins…', 'Choosing KPIs and charts for this domain…', 'Checking every query…', 'Reconciling totals with the source…', 'Laying it out…'];
+        let k = 0; status.className = 'ai-status busy'; status.textContent = steps[0];
+        const timer = setInterval(() => { k = Math.min(k + 1, steps.length - 1); status.textContent = steps[k]; }, 2200);
+        try {
+          plan = await api('/api/dashboards/ai/plan', { method: 'POST', body: { prompt, tables: M.tables, use_ai: useAi, context: ctxBody() } });
+          plan.keep = new Set(plan.definition.widgets.map((w) => w.id));
+          clearInterval(timer); step2();
+        } catch (e) { clearInterval(timer); status.className = 'ai-status err'; status.textContent = e.message; go.disabled = false; }
+      }, { cls: 'primary', ic: 'flow' });
+      root.replaceChildren(
+        el('div', { class: 'row' }, el('h2', { class: 'grow' }, 'Data model & business context'), el('span', { class: 'ai-steps' }, '1 Describe › ', el('b', {}, '2 Data model'), ' › 3 Review › 4 Create'), btn('Close', () => close(null), { cls: 'sm' })),
+        el('p', { class: 'muted' }, `${M.tables.length} table${M.tables.length === 1 ? '' : 's'}: `, M.tables.map((t) => el('span', { class: 'chip mono' }, t)),
+          ' · Check the joins and tell AI how your business works — the more context, the more accurate the dashboard. Saved for next time.'),
+        el('h3', { class: 'ai-h' }, 'Diagram (ERD)'), erdBox,
+        el('div', { class: 'dbm-grid' },
+          el('section', { class: 'dbm-col' },
+            el('h3', { class: 'ai-h' }, 'Relationships (joins)'), dbRelEditor(M, () => { drawErd(); }),
+            el('div', { class: 'row', style: { alignItems: 'center' } }, el('h3', { class: 'ai-h grow' }, 'Reconciliation'), sumEl, recheck),
+            checksBox,
+            el('details', { class: 'dbm-more' }, el('summary', {}, `Your reconciliation checks (${M.rules.length})`),
+              el('p', { class: 'muted small' }, 'Compare a number from the data with another query or a known figure (e.g. yesterday’s sales from the POS report).'), dbRulesEditor(M))),
+          el('section', { class: 'dbm-col' },
+            el('label', { class: 'lbl' }, 'Business domain', domSel),
+            el('label', { class: 'lbl' }, 'Dashboard size', density),
+            el('label', { class: 'lbl' }, 'Business context', ctxTa),
+            el('div', { class: 'lbl' }, el('span', {}, 'Metric definitions ', el('span', { class: 'muted', style: { fontWeight: 400 } }, '— AI uses these formulas exactly')), dbMetricsEditor(M)),
+            el('label', { class: 'switch' }, ai, 'Use AI (Dora) — off uses the built-in designer')) ),
+        status, el('div', { class: 'actions' }, btn('Back', () => step1(), { cls: 'ghost' }), go));
     };
     const step2 = () => {
       const D = plan.definition;
@@ -274,12 +335,15 @@ async function dbAiDialog(opts = {}) {
         } catch (e) { toast(e.message, 'err'); create.disabled = false; }
       }, { cls: 'primary', ic: 'check' });
       root.replaceChildren(
-        el('div', { class: 'row' }, el('h2', { class: 'grow' }, 'Review the proposed dashboard'), el('span', { class: 'ai-steps' }, '1 Describe › ', el('b', {}, '2 Review'), ' › 3 Create'), btn('Close', () => close(null), { cls: 'sm' })),
+        el('div', { class: 'row' }, el('h2', { class: 'grow' }, 'Review the proposed dashboard'), el('span', { class: 'ai-steps' }, '1 Describe › 2 Data model › ', el('b', {}, '3 Review'), ' › 4 Create'), btn('Close', () => close(null), { cls: 'sm' })),
         el('div', { class: 'ai-review-head' }, el('label', { class: 'lbl', style: { flex: 1 } }, 'Name', nameIn),
           el('div', { class: 'ai-badges' }, el('span', { class: 'chip' }, plan.used_ai ? 'Designed by AI' : 'Built-in designer'), el('span', { class: 'chip' }, `${plan.tables.length} table${plan.tables.length === 1 ? '' : 's'}`))),
         plan.relationships.length ? el('div', { class: 'ai-rels' }, el('b', {}, 'Relationships found: '),
           plan.relationships.map((r) => el('span', { class: 'chip' }, `${r.from.split('.').pop()}.${r.on[0]} → ${r.to.split('.').pop()}.${r.on[1]}`))) : null,
         plan.warnings.length ? el('ul', { class: 'ai-warn' }, plan.warnings.map((x) => el('li', {}, x))) : null,
+        el('details', { class: 'dbm-more', open: (plan.summary && (plan.summary.fail || plan.summary.warn)) ? true : null },
+          el('summary', {}, 'Reconciliation — do the numbers add up? ', dbChecksSummary(plan.summary)), dbChecks(plan.checks)),
+        el('details', { class: 'dbm-more' }, el('summary', {}, `Tables used & diagram (${plan.tables.length})`), plan.erd ? dbErd(plan.erd, { fit: true, maxHeight: 380 }) : null),
         el('h3', { class: 'ai-h' }, `Datasets (${D.datasets.length})`),
         el('div', { class: 'ai-ds' }, D.datasets.map((d) => el('div', { class: 'ai-ds-card' },
           el('div', { class: 'row' }, el('b', { class: 'grow' }, d.name), d.rows != null ? el('span', { class: 'chip' }, `${d.rows.toLocaleString()} rows`) : null,
@@ -290,7 +354,7 @@ async function dbAiDialog(opts = {}) {
         el('p', { class: 'muted small' }, 'Untick anything you don\'t want. You can change everything later in Edit.'),
         el('div', { class: 'ai-pages' }, pages),
         D.filters.length ? el('p', { class: 'small' }, el('b', {}, 'Dashboard filters: '), D.filters.map((f) => f.label).join(', ')) : null,
-        el('div', { class: 'actions' }, btn('Back', () => step1(), { cls: 'ghost' }), btn('Design again', () => step1(), {}), create));
+        el('div', { class: 'actions' }, btn('Back', () => (model ? stepModel() : step1()), { cls: 'ghost' }), btn('Design again', () => (model ? stepModel() : step1()), {}), create));
     };
     step1();
     return root;
@@ -370,6 +434,16 @@ function dbAutoFilters(ds, cols, rows) {
 }
 
 /* ======================= dashboard view / editor ======================= */
+/* small dropdown menu: items = [[label, icon, fn], ...] */
+function dbMenu(label, items) {
+  const list = el('div', { class: 'db-menu-list', role: 'menu' });
+  const wrap = el('details', { class: 'db-menu' }, el('summary', { class: 'btn', 'aria-haspopup': 'menu' }, label, el('span', { class: 'db-menu-caret', 'aria-hidden': 'true' }, '▾')), list);
+  items.filter(Boolean).forEach(([t, ic, fn]) => list.append(el('button', { type: 'button', role: 'menuitem', class: 'db-menu-item', onClick: () => { wrap.open = false; fn(); } }, ic ? icon(ic, 15) : null, t)));
+  document.addEventListener('pointerdown', (e) => { if (wrap.open && !wrap.contains(e.target)) wrap.open = false; });
+  wrap.addEventListener('keydown', (e) => { if (e.key === 'Escape') { wrap.open = false; wrap.querySelector('summary').focus(); } });
+  return wrap;
+}
+
 async function viewDashboard(main, r) {
   const did = r.rest[0];
   main.classList.add('flush');
@@ -390,7 +464,9 @@ async function viewDashboard(main, r) {
   S.app = r.params.get('app') === '1';
   document.body.classList.toggle('dash-app', S.app);
   const cur = () => S.D.currency || '₹';
-  const pal = () => DB_THEMES[S.D.theme && S.D.theme !== 'auto' ? S.D.theme : DB_LOOK_PALETTE[S.D.look || 'clean']] || DB_THEMES.vivid;
+  const theme = () => dbResolveTheme(S.D.look || 'clean', S.D.custom);
+  const pal = () => (S.D.theme && S.D.theme !== 'auto' && DB_THEMES[S.D.theme]) || theme().p;
+  dbLoadUserThemes().then(() => { try { if (DB_USER_THEMES.some((u) => u.id === S.D.look)) { applyLook(); drawGrid(); } } catch { /* page not ready yet */ } });
   const tcol = (dsId) => { const d = S.D.datasets.find((x) => x.id === dsId); return d && d.timeColumn && d.timeColumn !== '__none__' ? d.timeColumn : null; };
   const periodEnabled = () => S.D.datasets.some((d) => tcol(d.id));
   function autoTimeColumns() {
@@ -521,21 +597,90 @@ async function viewDashboard(main, r) {
     clearInterval(S.refreshTimer);
     const m = Number(S.D.refreshMinutes || 0);
     if (m > 0) S.refreshTimer = setInterval(() => { if (!S.edit) loadAll(true); }, m * 60000);
+    if (m === -1) {                                       // live: poll a cheap "data version" (file stamps of the tables) and reload on change
+      let ver = null;
+      const tick = async () => {
+        if (S.edit || document.hidden) return;
+        try {
+          const v = (await api(`/api/dashboards/${did}/version`, { method: 'POST' })).version;
+          if (ver != null && v !== ver) { await loadAll(true); stamp.classList.add('live-flash'); setTimeout(() => stamp.classList.remove('live-flash'), 1600); }
+          ver = v;
+        } catch { /* ignore */ }
+      };
+      tick();
+      S.refreshTimer = setInterval(tick, 10000);
+    }
+  }
+
+  /* ---------- PDF: every page, laid out for A4 landscape, charts as images ---------- */
+  async function exportPdf() {
+    const pages = S.D.pages.filter((p) => S.D.widgets.some((w) => w.page === p.id));
+    if (!pages.length) { toast('Nothing to export'); return; }
+    if (S.loading.size) { toast('Wait until the data has loaded'); return; }
+    toast(`Preparing ${pages.length} page${pages.length > 1 ? 's' : ''}…`);
+    const keep = { page: S.page, fit: S.D.fitScreen };
+    S.printing = true; S.D.fitScreen = false;
+    document.body.classList.add('dash-capturing');
+    const shots = [];
+    try {
+      for (const p of pages) {
+        S.page = p.id; drawGrid();
+        await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 60)));
+        const clone = grid.cloneNode(true);
+        const src = grid.querySelectorAll('canvas'), dst = clone.querySelectorAll('canvas');
+        src.forEach((c, i) => { const img = new Image(); img.src = c.toDataURL('image/png'); img.className = 'dash-print-img'; img.alt = c.getAttribute('aria-label') || ''; dst[i].replaceWith(img); });
+        clone.querySelectorAll('.dash-w-menu').forEach((n) => n.remove());
+        clone.querySelectorAll('select').forEach((sel, i) => {               // keep the chosen value visible
+          const o = grid.querySelectorAll('select')[i];
+          sel.replaceWith(el('span', { class: 'dash-print-sel' }, o && o.selectedOptions[0] ? o.selectedOptions[0].textContent : ''));
+        });
+        shots.push({ page: p, node: clone, w: grid.offsetWidth, h: grid.scrollHeight });
+      }
+    } finally {
+      S.page = keep.page; S.D.fitScreen = keep.fit; S.printing = false;
+      document.body.classList.remove('dash-capturing');
+      drawPages(); drawGrid();
+    }
+    const W = windows();
+    const filt = S.D.filters.map((f) => { const v = S.fvals[f.id]; return v == null || v === '' || (Array.isArray(v) && !v.length) ? null : `${f.label || f.column}: ${Array.isArray(v) ? v.join(', ') : typeof v === 'object' ? `${v.from || '…'} – ${v.to || '…'}` : v}`; }).filter(Boolean);
+    const meta = [W.cur ? `${dbShortDate(W.cur.from)} – ${dbShortDate(W.cur.to)}${W.prev ? ` vs ${dbShortDate(W.prev.from)} – ${dbShortDate(W.prev.to)}` : ''}` : 'All dates', ...filt].join(' · ');
+    const dr = dashRoot();
+    const root = el('div', { class: `${dr.className} dash-print`, style: dr.getAttribute('style') || '' });
+    const PW = 1067, PH = 690;                                // A4 landscape at 96 dpi, minus padding and the page header
+    shots.forEach((s, i) => {
+      const zw = Math.min(1, PW / s.w), zh = PH / s.h;
+      const zoom = zh >= zw ? zw : zh >= zw * 0.5 ? zh : zw;   // fit on one sheet when possible, else fit width and flow
+      const wrap = el('div', { class: 'dash-print-grid', style: { width: `${s.w}px`, zoom: String(zoom) } }, s.node);
+      root.append(el('section', { class: 'dash-print-page' },
+        el('header', { class: 'dash-print-head' }, el('div', { class: 'grow' }, el('b', {}, S.name), pages.length > 1 ? el('span', {}, ` · ${s.page.name}`) : null,
+          el('div', { class: 'dash-print-meta' }, meta)),
+        el('div', { class: 'dash-print-stamp' }, `${new Date().toLocaleString()} · page ${i + 1} of ${shots.length}`)), wrap));
+    });
+    document.body.append(root);
+    await Promise.all([...root.querySelectorAll('img')].map((im) => (im.complete ? null : new Promise((r) => { im.onload = r; im.onerror = r; }))));
+    const done = () => { document.body.classList.remove('dash-printing'); root.remove(); window.removeEventListener('afterprint', done); };
+    document.body.classList.add('dash-printing');
+    window.addEventListener('afterprint', done);
+    setTimeout(() => { window.print(); setTimeout(() => { if (document.body.contains(root) && !window.matchMedia('print').matches) done(); }, 1500); }, 50);
   }
 
   /* ---------- toolbar ---------- */
   function drawBar() {
     const refreshSel = el('select', { class: 'field dash-refresh', 'aria-label': 'Auto-refresh' },
-      [[0, 'Auto-refresh off'], [1, 'Every minute'], [5, 'Every 5 min'], [15, 'Every 15 min'], [60, 'Every hour']].map(([v, t]) => el('option', { value: v, selected: Number(S.D.refreshMinutes || 0) === v }, t)));
+      [[0, 'Auto-refresh off'], [-1, 'Live — when data changes'], [1, 'Every minute'], [5, 'Every 5 min'], [15, 'Every 15 min'], [60, 'Every hour']].map(([v, t]) => el('option', { value: v, selected: Number(S.D.refreshMinutes || 0) === v }, t)));
     refreshSel.addEventListener('change', () => { S.D.refreshMinutes = Number(refreshSel.value); setAutoRefresh(); if (canEdit) save(true); });
     if (!S.edit) {
+      const more = dbMenu('More', [
+        ['Ask Dora', 'flow', () => dbAskDora()],
+        ['Data model & checks', 'db', () => dbModelDialog(did, { name: S.name, definition: S.D })],
+        [S.D.fitScreen ? 'Scroll page (no fit)' : 'Fit to screen', 'fold', () => { S.D.fitScreen = !S.D.fitScreen; if (canEdit) save(true); drawBar(); drawGrid(); }],
+        [S.app ? 'Exit app view' : 'App view (full screen)', 'ext', () => { S.app = !S.app; document.body.classList.toggle('dash-app', S.app); history.replaceState(null, '', `#/dashboard/${did}${S.app ? '?app=1' : ''}`); setTimeout(() => Object.values(S.charts).forEach((c) => c.resize()), 50); drawBar(); }],
+      ]);
       setKids(bar, refreshSel,
         btn('Refresh', () => loadAll(true), { ic: 'restart' }),
-        btn('Ask Dora', () => dbAskDora(), { ic: 'flow' }),
-        btn(S.D.fitScreen ? 'Scroll page' : 'Fit to screen', () => { S.D.fitScreen = !S.D.fitScreen; if (canEdit) save(true); drawBar(); drawGrid(); }, { ic: 'fold', title: 'Fit every widget on one screen (no scrolling)' }),
-        btn('Present', () => presentStory(), { cls: 'present-btn', ic: 'play', title: 'AI turns this page into slides and explains what is happening' }),
-        btn('Export PDF', () => window.print(), { ic: 'download' }),
-        btn(S.app ? 'Exit app view' : 'App view', () => { S.app = !S.app; document.body.classList.toggle('dash-app', S.app); history.replaceState(null, '', `#/dashboard/${did}${S.app ? '?app=1' : ''}`); setTimeout(() => Object.values(S.charts).forEach((c) => c.resize()), 50); drawBar(); }, { ic: 'fold', title: 'Full-screen view without DataBridge menus — good for sharing on a screen' }),
+        !dbFeat('dashboards_present') ? null : btn('Present', () => presentStory(), { cls: 'present-btn', ic: 'play', title: 'AI turns this page into slides and explains what is happening' }),
+        btn('Export PDF', () => exportPdf(), { ic: 'download', title: 'Every page, laid out for A4 landscape' }),
+        more,
         canEdit ? btn('Edit', () => { S.edit = true; drawAll(); }, { cls: 'primary', ic: 'edit' }) : null);
     } else {
       const addMenu = el('select', { class: 'field dash-add', 'aria-label': 'Add widget' }, el('option', { value: '' }, '+ Add widget'),
@@ -605,7 +750,7 @@ async function viewDashboard(main, r) {
   const pageWidgets = () => S.D.widgets.filter((w) => w.page === S.page);
   const dashRoot = () => main.querySelector('.dash');
   function themeVar(name, fallback) { const r = dashRoot(); const v = r ? getComputedStyle(r).getPropertyValue(name).trim() : ''; return v || fallback; }
-  function applyLook() { const r = dashRoot(); if (!r) return; r.className = `dash look-${S.D.look || 'clean'}${S.D.fitScreen && !S.edit ? ' fit' : ''}`; }
+  function applyLook() { const r = dashRoot(); if (!r) return; r.classList.remove('fit'); dbApplyThemeTo(r, theme(), S.D.fitScreen && !S.edit ? 'fit' : ''); }
   function drawPages() {
     const tabs = S.D.pages.map((p) => {
       const b = el('button', { type: 'button', class: 'dash-tab', 'aria-current': p.id === S.page ? 'page' : null,
@@ -666,12 +811,12 @@ async function viewDashboard(main, r) {
     }
     const rowsUsed = Math.max(...ws.map((w) => (w.layout ? w.layout.y + w.layout.h : 4)));
     applyLook();
-    let rowH = DB_ROW_H;
+    let rowH = S.printing ? 62 : DB_ROW_H;
     if (S.D.fitScreen && !S.edit) {                       // one screen, no scrolling: rows shrink to fit the window
       const mr = main.getBoundingClientRect(), gr = grid.getBoundingClientRect();
       const avail = Math.max(300, Math.min(window.innerHeight, mr.bottom) - (gr.top + (main.scrollTop || 0) - (mr.top < 0 ? 0 : 0)) - 22);
       const gap = rowsUsed * 1 > 0 ? 10 : DB_GAP;            // dense gap
-      rowH = Math.max(24, Math.floor((avail - gap * (rowsUsed - 1)) / rowsUsed));
+      rowH = Math.max(ws.some((w) => w.type === 'kpi') ? 44 : 30, Math.floor((avail - gap * (rowsUsed - 1)) / rowsUsed));   // never squash KPI numbers
     }
     grid.classList.toggle('dense', rowH < 64);
     grid.classList.toggle('xdense', rowH < 46);
@@ -728,7 +873,7 @@ async function viewDashboard(main, r) {
       const card = body.parentElement;
       const tone = k.change == null || Math.abs(k.change) < 0.01 ? 'flat' : ((k.change > 0) !== !!w.lowerBetter ? 'good' : 'bad');
       const kstyle = w._panel ? 'tinted' : (w.kpiStyle || S.D.kpiStyle || 'tinted');
-      card.classList.remove('good', 'bad', 'flat', 'kpi-gradient', 'kpi-gauge', 'kpi-spark-line'); card.classList.add(tone);
+      card.classList.remove('good', 'bad', 'flat', 'kpi-gradient', 'kpi-gauge', 'kpi-spark-line', 'kpi-ring', 'kpi-minimal', 'kpi-accent'); card.classList.add(tone);
       if (w._panel) card.classList.add('t-kpi');
       const valueTxt = dbFmt(k.cur, w.format || 'compact', cur());
       const full = dbIsNum(k.cur) ? dbFmt(k.cur, String(w.format || '').startsWith('currency') ? 'currency' : 'number', cur()) : '';
@@ -757,6 +902,30 @@ async function viewDashboard(main, r) {
           el('div', { class: 'kpi-gauge-v', title: full }, valueTxt),
           el('div', { class: 'kpi-gauge-scale' }, el('span', {}, '0'), el('span', {}, target ? `target ${dbFmt(target, w.format || 'compact', cur())}` : dbFmt(max, w.format || 'compact', cur())))),
         el('div', { class: 'kpi-gauge-foot' }, prevLine, badge));
+        return;
+      }
+      if (kstyle === 'ring') {
+        card.classList.add('kpi-ring');
+        const pctF = String(w.format || '') === 'percent';
+        const target = w.target != null && w.target !== '' && Number.isFinite(Number(w.target)) ? Number(w.target) : null;
+        const max = target || (pctF ? 1 : (dbIsNum(k.prev) && k.prev > 0 ? k.prev : (dbIsNum(k.cur) ? k.cur : 1)));
+        const ratio = dbIsNum(k.cur) && max ? Math.max(0, Math.min(1, k.cur / max)) : 0;
+        const color = tone === 'bad' ? '#E5484D' : tone === 'good' ? '#22A06B' : (theme().v.accent || '#0A5CFF');
+        const R = 34, C = 2 * Math.PI * R;
+        const ring = el('div', { class: 'kpi-ring-svg', html: `<svg viewBox="0 0 84 84" aria-hidden="true"><circle cx="42" cy="42" r="${R}" fill="none" stroke="var(--gauge-bg,#E6EAF2)" stroke-width="9"/><circle cx="42" cy="42" r="${R}" fill="none" stroke="${color}" stroke-width="9" stroke-linecap="round" stroke-dasharray="${(C * ratio).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 42 42)"/></svg><span>${Math.round(ratio * 100)}%</span>` });
+        body.append(el('div', { class: 'kpi-wrap' }, ring, el('div', { class: 'kpi-main' }, el('div', { class: 'kpi-v', title: full }, valueTxt), prevLine,
+          el('div', { class: 'kpi-ring-of muted small' }, target ? `of target ${dbFmt(target, w.format || 'compact', cur())}` : k.prev != null ? `of ${k.label || 'previous'}` : ''), badge)));
+        return;
+      }
+      if (kstyle === 'minimal') {
+        card.classList.add('kpi-minimal');
+        body.append(el('div', { class: 'kpi-min' }, el('div', { class: 'kpi-v', title: full }, valueTxt), el('div', { class: 'kpi-min-foot' }, badge, prevLine)));
+        return;
+      }
+      if (kstyle === 'accent') {
+        card.classList.add('kpi-accent');
+        body.append(el('div', { class: 'kpi-wrap' }, el('div', { class: 'kpi-main' }, el('div', { class: 'kpi-v', title: full }, valueTxt), prevLine), el('div', { class: 'kpi-side' }, badge,
+          k.spark.length > 1 ? sparkLine(k.spark, theme().v.accent || '#0A5CFF', true) : null)));
         return;
       }
       if (kstyle === 'spark') {
@@ -976,6 +1145,11 @@ async function viewDashboard(main, r) {
   }
   function renderChart(w, cols, rows, body) {
     const P = pal();
+    const CS = dbChartStyle(S.D, theme());
+    const barR = CS.bars === 'square' ? 0 : CS.bars === 'pill' ? 999 : (w._compact ? 3 : 6);
+    const lineFill = (color) => (CS.fill === 'gradient' ? gradientFill(color) : CS.fill === 'solid' ? `${color}33` : 'transparent');
+    const tickC = themeVar('--d-muted', Chart.defaults.color);
+    const fontFam = ((themeVar('--d-font', '') || '').replace(/^inherit$/, '') || "'IBM Plex Sans'") + ', system-ui, sans-serif';
     const { base, labels, sets } = chartData(w, rows, cols);
     if (!sets.length) { body.append(el('p', { class: 'muted dash-msg' }, S.edit ? 'Pick a value column for this chart.' : 'This chart has no value column yet.')); return; }
     if (!labels.length) { body.append(el('p', { class: 'muted dash-msg' }, 'No rows match the current filters.')); return; }
@@ -1001,9 +1175,9 @@ async function viewDashboard(main, r) {
       const t = s.type || (s.src === 'layer' && baseType === 'bar' ? 'line' : baseType);
       const perBar = t === 'bar' && single && !w.series && w.colorBy !== 'single' && !base.isTime;   // categories only, not dates
       return { type: t, label: s.name, data, yAxisID: hbar ? undefined : s.axisId,
-        borderColor: color, backgroundColor: perBar ? labels.map((_, i) => P[i % P.length]) : t === 'line' ? gradientFill(color) : color,
-        borderWidth: t === 'line' ? 2.5 : 0, fill: t === 'line' && (w.type === 'area' || single), tension: 0.35, spanGaps: true,
-        pointRadius: w._compact || labels.length > 40 ? 0 : 3, pointHoverRadius: 5, pointBackgroundColor: color, borderRadius: t === 'bar' ? (w._compact ? 3 : 6) : 0,
+        borderColor: color, backgroundColor: perBar ? labels.map((_, i) => P[i % P.length]) : t === 'line' ? lineFill(color) : color,
+        borderWidth: t === 'line' ? 2.5 : 0, fill: t === 'line' && CS.fill !== 'none' && (w.type === 'area' || single), tension: CS.lines === 'straight' ? 0 : 0.35, spanGaps: true,
+        pointRadius: !CS.points || w._compact || labels.length > 40 ? 0 : 3, pointHoverRadius: 5, pointBackgroundColor: color, borderRadius: t === 'bar' ? barR : 0, borderSkipped: CS.bars === 'pill' ? false : 'start',
         maxBarThickness: 46, stack: w.stacked && t === 'bar' ? 'all' : undefined, order: t === 'line' ? 1 : 2 };
     });
     if (mlOK) {
@@ -1030,19 +1204,19 @@ async function viewDashboard(main, r) {
       type: baseType,
       data: { labels: all, datasets: isPie ? datasets.slice(0, 1) : datasets },
       options: {
-        responsive: true, maintainAspectRatio: false, animation: { duration: 350 }, color: themeVar('--d-muted', Chart.defaults.color),
+        responsive: true, maintainAspectRatio: false, animation: S.printing ? false : { duration: 350 }, devicePixelRatio: S.printing ? 2 : undefined, color: themeVar('--d-muted', Chart.defaults.color),
         indexAxis: hbar ? 'y' : 'x', cutout: isPie ? '58%' : undefined,
         interaction: isPie ? undefined : { mode: 'index', intersect: false },
         plugins: {
           legend: { display: isPie ? !w._compact || labels.length <= 6 : datasets.length > 1 && !w._compact, position: isPie ? 'right' : 'bottom',
-            labels: { boxWidth: 12, usePointStyle: true, font: { family: 'IBM Plex Sans' }, filter: (it) => !hidden(it.text) } },
+            labels: { boxWidth: 12, usePointStyle: true, color: tickC, font: { family: fontFam }, filter: (it) => !hidden(it.text) } },
           tooltip: { filter: (it) => !hidden(it.dataset.label) && it.raw != null,
             callbacks: { label: (c) => `${c.dataset.label}: ${fmt(c.raw)}`, footer: (items) => (fut.includes(items[0] && items[0].label) ? 'Forecast — 80% range shaded' : '') } },
         },
         scales: isPie ? {} : {
-          [hbar ? 'x' : 'y']: { beginAtZero: true, stacked: !!w.stacked, ticks: { callback: (v) => fmt(v), maxTicksLimit: w._compact ? 4 : undefined, font: { size: w._compact ? 10 : 12 } }, grid: { color: themeVar('--d-grid', getComputedStyle(document.documentElement).getPropertyValue('--chart-grid').trim() || '#EEF1F6') } },
-          ...(hasRight ? { y1: { position: 'right', beginAtZero: true, grid: { display: false }, ticks: { callback: (v) => fmt(v) } } } : {}),
-          [hbar ? 'y' : 'x']: { stacked: !!w.stacked, grid: { display: false }, ticks: { autoSkip: true, maxRotation: 0, maxTicksLimit: w._compact ? (hbar ? 8 : 4) : undefined, font: { size: w._compact ? 10 : 12 } } },
+          [hbar ? 'x' : 'y']: { beginAtZero: true, stacked: !!w.stacked, border: { display: false }, ticks: { color: tickC, callback: (v) => fmt(v), maxTicksLimit: w._compact ? 4 : undefined, font: { size: w._compact ? 10 : 12, family: fontFam } }, grid: { display: CS.grid, color: themeVar('--d-grid', getComputedStyle(document.documentElement).getPropertyValue('--chart-grid').trim() || '#EEF1F6') } },
+          ...(hasRight ? { y1: { position: 'right', beginAtZero: true, grid: { display: false }, ticks: { color: tickC, callback: (v) => fmt(v) } } } : {}),
+          [hbar ? 'y' : 'x']: { stacked: !!w.stacked, grid: { display: false }, border: { color: themeVar('--d-grid', '#E5E7EB') }, ticks: { color: tickC, autoSkip: true, maxRotation: 0, maxTicksLimit: w._compact ? (hbar ? 8 : 4) : undefined, font: { size: w._compact ? 10 : 12, family: fontFam } } },
         },
         onClick: (evt, els) => {
           if (S.edit || !els.length || !w.x || base.isTime) return;
@@ -1066,7 +1240,7 @@ async function viewDashboard(main, r) {
       type: 'bar',
       data: { labels: stages.map((s2) => s2[0]), datasets: [{ label: w.title || 'Funnel', data: stages.map(([, v]) => [-(v / top) * 50, (v / top) * 50]), raw: stages.map((s2) => s2[1]),
         backgroundColor: stages.map((_, i) => P[i % P.length]), borderRadius: 6, borderSkipped: false, barPercentage: 0.92, categoryPercentage: 1 }] },
-      options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: { duration: 350 }, color: themeVar('--d-muted', Chart.defaults.color),
+      options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: S.printing ? false : { duration: 350 }, devicePixelRatio: S.printing ? 2 : undefined, color: themeVar('--d-muted', Chart.defaults.color),
         layout: { padding: { right: 8 } },
         scales: { x: { display: false, min: -52, max: 52 }, y: { grid: { display: false }, ticks: { color: themeVar('--d-text', Chart.defaults.color), font: { weight: '600' } } } },
         plugins: { legend: { display: false },
@@ -1361,10 +1535,40 @@ async function viewDashboard(main, r) {
         el('div', { class: 'ss-foot' }, st.used_ai ? 'Narrated by AI from the numbers on this dashboard — check before sharing.' : 'Narrated by the built-in presenter from this dashboard’s numbers.')) });
     // ---- deck UI
     let i = 0, speaking = false, auto = false;
+    // ---- presentation theme (own choice, or match the dashboard)
+    const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+    const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } };
+    let presTheme = lsGet(`db-present-theme-${did}`) || S.D.presentTheme || 'match';
+    const applyPres = () => dbApplyThemeTo(shade, presTheme === 'match' ? theme() : dbResolveTheme(presTheme));
+    applyPres();
+    const themeSel = el('select', { class: 'field', 'aria-label': 'Presentation theme', title: 'Presentation theme' },
+      el('option', { value: 'match' }, 'Theme: match dashboard'),
+      DB_USER_THEMES.length ? el('optgroup', { label: 'My themes' }, DB_USER_THEMES.map((u) => el('option', { value: u.id }, u.name))) : null,
+      [...new Set(DB_THEME_DEFS.map((t) => t.group))].map((g) => el('optgroup', { label: g }, DB_THEME_DEFS.filter((t) => t.group === g).map((t) => el('option', { value: t.id }, t.name)))));
+    themeSel.value = presTheme;
+    themeSel.addEventListener('change', () => { presTheme = themeSel.value; lsSet(`db-present-theme-${did}`, presTheme); if (S.edit) { S.D.presentTheme = presTheme; S.dirty = true; } applyPres(); });
+    // ---- voice: neural voices from the server (Edge neural / OpenAI / ElevenLabs), browser voices as fallback
+    const VK = 'db-voice';
+    let VC = {}; try { VC = JSON.parse(lsGet(VK) || '{}'); } catch { VC = {}; }
+    let ttsInfo = { engine: 'browser', available: false, voices: [] };
+    api('/api/tts/status').then((r) => { ttsInfo = r; if (!VC.engine) VC.engine = r.available ? 'server' : 'browser'; }).catch(() => { VC.engine = VC.engine || 'browser'; });
     const voices = () => window.speechSynthesis ? speechSynthesis.getVoices() : [];
-    const PREF = [/Neerja.*Natural/i, /Aria.*Natural/i, /Jenny.*Natural/i, /Sonia.*Natural/i, /Natural.*(Female|en-IN)/i, /Google UK English Female/i, /Google US English/i, /Samantha/i, /Veena/i, /Zira/i, /female/i];
-    const pickVoice = () => { const v = voices().filter((x) => /^en/i.test(x.lang)); for (const re of PREF) { const m = v.find((x) => re.test(x.name)); if (m) return m; } return v.find((x) => /en-IN/i.test(x.lang)) || v[0]; };
+    const PREF = [/Neerja.*Natural/i, /Aria.*Natural/i, /Jenny.*Natural/i, /Ava.*Natural/i, /Emma.*Natural/i, /Sonia.*Natural/i, /Natural.*(Female|en-IN)/i, /Google UK English Female/i, /Google US English/i, /Samantha/i, /Veena/i, /Zira/i, /female/i];
+    const pickVoice = () => { const v = voices().filter((x) => /^en|^hi/i.test(x.lang)); if (VC.browserVoice) { const m = v.find((x) => x.name === VC.browserVoice); if (m) return m; } for (const re of PREF) { const m = v.find((x) => re.test(x.name)); if (m) return m; } return v.find((x) => /en-IN/i.test(x.lang)) || v[0]; };
     if (window.speechSynthesis) speechSynthesis.getVoices();
+    const audio = new Audio();
+    const clips = new Map();                       // slide index -> Promise<objectURL>
+    const clip = (k) => {
+      if (k < 0 || k >= slides.length) return null;
+      if (!clips.has(k)) {
+        clips.set(k, fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: slides[k].speak, voice: VC.voice || ttsInfo.default_voice, rate: Number(VC.rate || 0) }) })
+          .then(async (r) => { if (!r.ok) { let m = r.statusText; try { m = (await r.json()).detail || m; } catch { /* audio */ } throw new Error(m); } return URL.createObjectURL(await r.blob()); })
+          .catch((e) => { clips.delete(k); throw e; }));
+      }
+      return clips.get(k);
+    };
+    const resetClips = () => { clips.forEach((p) => p.then((u) => URL.revokeObjectURL(u)).catch(() => {})); clips.clear(); };
     const stage = el('div', { class: 'story-stage' }, slides.map((s, k) => el('section', { class: `story-slide k-${s.kind}`, 'aria-hidden': 'true', 'data-n': k + 1 }, s.node,
       el('div', { class: 'ss-page' }, `${k + 1} / ${slides.length}`))));
     const counter = el('span', { class: 'story-count' });
@@ -1372,25 +1576,73 @@ async function viewDashboard(main, r) {
     const notes = el('div', { class: 'story-notes', 'aria-live': 'polite' });
     const speakBtn = btn('Read aloud', () => toggleSpeak(), { cls: 'sm', ic: 'play' });
     const autoBtn = btn('Auto-play', () => { auto = !auto; autoBtn.classList.toggle('on', auto); if (auto && !speaking) toggleSpeak(); }, { cls: 'sm' });
-    function stopSpeak() { if (window.speechSynthesis) speechSynthesis.cancel(); speaking = false; speakBtn.classList.remove('on'); }
-    function speak() {
+    const voiceBtn = btn('Voice', () => toggleVoicePanel(), { cls: 'sm', ic: 'gear', title: 'Voice, speed and engine' });
+    let voicePanel = null;
+    function toggleVoicePanel() {
+      if (voicePanel) { voicePanel.remove(); voicePanel = null; return; }
+      const engine = el('select', { class: 'field' }, el('option', { value: 'server', disabled: !ttsInfo.available }, `Neural voice (${ttsInfo.engine_label || ttsInfo.engine || 'server'})${ttsInfo.available ? '' : ' — not set up'}`), el('option', { value: 'browser' }, 'Browser voice (offline)'));
+      engine.value = VC.engine === 'server' && ttsInfo.available ? 'server' : 'browser';
+      const voiceSel = el('select', { class: 'field' });
+      const fill = () => {
+        if (engine.value === 'server') {
+          voiceSel.replaceChildren(...(ttsInfo.voices || []).map((v) => el('option', { value: v.id, selected: v.id === (VC.voice || ttsInfo.default_voice) }, v.label)));
+        } else {
+          voiceSel.replaceChildren(...voices().filter((x) => /^en|^hi/i.test(x.lang)).map((v) => el('option', { value: v.name, selected: v.name === (pickVoice() || {}).name }, `${v.name} (${v.lang})`)));
+        }
+      };
+      fill();
+      const rate = el('input', { type: 'range', min: -30, max: 30, value: Number(VC.rate || 0), 'aria-label': 'Speed' });
+      const rateOut = el('span', { class: 'muted small' }, `${Number(VC.rate || 0) > 0 ? '+' : ''}${Number(VC.rate || 0)}%`);
+      const persist = () => { lsSet(VK, JSON.stringify(VC)); resetClips(); };
+      engine.addEventListener('change', () => { VC.engine = engine.value; fill(); persist(); });
+      voiceSel.addEventListener('change', () => { if (engine.value === 'server') VC.voice = voiceSel.value; else VC.browserVoice = voiceSel.value; persist(); });
+      rate.addEventListener('input', () => { VC.rate = Number(rate.value); rateOut.textContent = `${VC.rate > 0 ? '+' : ''}${VC.rate}%`; });
+      rate.addEventListener('change', persist);
+      voicePanel = el('div', { class: 'story-voice' }, el('b', {}, 'Presenter voice'),
+        el('label', { class: 'lbl' }, 'Engine', engine), el('label', { class: 'lbl' }, 'Voice', voiceSel),
+        el('label', { class: 'lbl' }, el('span', {}, 'Speed ', rateOut), rate),
+        !ttsInfo.available ? el('p', { class: 'muted small', style: { margin: 0 } }, 'For human-like neural voices, an admin sets Admin › Settings › Voice (free Edge neural voices need internet; OpenAI or ElevenLabs need an API key).') : null,
+        el('div', { class: 'row', style: { gap: '6px' } }, btn('Test', () => { stopSpeak(); speak(); }, { cls: 'sm primary', ic: 'play' }), btn('Close', () => toggleVoicePanel(), { cls: 'sm' })));
+      shade.append(voicePanel);
+    }
+    function stopSpeak() { if (window.speechSynthesis) speechSynthesis.cancel(); audio.pause(); speaking = false; speakBtn.classList.remove('on'); speakBtn.lastChild.textContent = 'Read aloud'; }
+    const afterSlide = () => { if (auto && i < slides.length - 1) { setTimeout(() => { if (speaking) { go(i + 1); speak(); } }, 650); } else { speaking = false; speakBtn.classList.remove('on'); speakBtn.lastChild.textContent = 'Read aloud'; } };
+    async function speakServer() {
+      const slideNo = i;
+      speaking = true; speakBtn.classList.add('on'); speakBtn.lastChild.textContent = 'Loading voice…';
+      try {
+        const url = await clip(slideNo);
+        if (!speaking || slideNo !== i) return;
+        speakBtn.lastChild.textContent = 'Stop';
+        audio.src = url; audio.playbackRate = 1;
+        audio.onended = () => { if (speaking && slideNo === i) afterSlide(); };
+        await audio.play();
+        clip(slideNo + 1)?.catch(() => {});      // fetch the next slide while this one plays: no gap
+      } catch (e) {
+        if (!speaking) return;
+        toast(`Neural voice unavailable (${e.message}). Using the browser voice.`, 'err');
+        VC.engine = 'browser'; speakBrowser();
+      }
+    }
+    function speakBrowser() {
       if (!window.speechSynthesis) { toast('Read aloud is not supported in this browser', 'err'); return; }
       speechSynthesis.cancel();
-      const v = pickVoice(), natural = v && /Natural|Neural/i.test(v.name);
+      const v = pickVoice(), natural = v && /Natural|Neural|Online/i.test(v.name);
       const parts = slides[i].speak.replace(/\s+/g, ' ').match(/[^.!?]+[.!?]*/g) || [slides[i].speak];
-      speaking = true; speakBtn.classList.add('on');
+      speaking = true; speakBtn.classList.add('on'); speakBtn.lastChild.textContent = 'Stop';
       const slideNo = i;
       const say = (k) => {
         if (!speaking || slideNo !== i) return;
-        if (k >= parts.length) { if (auto && i < slides.length - 1) { setTimeout(() => { if (speaking) { go(i + 1); speak(); } }, 700); } else { speaking = false; speakBtn.classList.remove('on'); } return; }
+        if (k >= parts.length) { afterSlide(); return; }
         const u = new SpeechSynthesisUtterance(parts[k].trim());
         if (v) u.voice = v; u.lang = v ? v.lang : 'en-IN';
-        u.rate = natural ? 0.98 : 0.92; u.pitch = natural ? 1 : 1.08;
-        u.onend = () => setTimeout(() => say(k + 1), 260);           // short human pause between sentences
+        u.rate = (natural ? 0.98 : 0.93) * (1 + Number(VC.rate || 0) / 100); u.pitch = natural ? 1 : 1.06;
+        u.onend = () => setTimeout(() => say(k + 1), /[,;:]$/.test(parts[k].trim()) ? 140 : 300);   // human-like pauses
         speechSynthesis.speak(u);
       };
       say(0);
     }
+    function speak() { if (VC.engine === 'server' && ttsInfo.available) speakServer(); else speakBrowser(); }
     function toggleSpeak() { if (speaking) stopSpeak(); else speak(); }
     function go(k) {
       i = Math.max(0, Math.min(slides.length - 1, k));
@@ -1400,7 +1652,7 @@ async function viewDashboard(main, r) {
       notes.textContent = slides[i].speak;
       if (speaking && !auto) speak();
     }
-    const close = () => { stopSpeak(); document.removeEventListener('keydown', keys, true); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); shade.remove(); };
+    const close = () => { stopSpeak(); resetClips(); document.removeEventListener('keydown', keys, true); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); shade.remove(); };
     const keys = (e) => {
       if (e.key === 'Escape') { e.preventDefault(); close(); }
       else if (['ArrowRight', 'PageDown', ' '].includes(e.key)) { e.preventDefault(); go(i + 1); }
@@ -1411,7 +1663,7 @@ async function viewDashboard(main, r) {
     shade.replaceChildren(
       el('div', { class: 'story-top' }, el('b', {}, st.title), el('span', { class: 'story-badge' }, st.used_ai ? '✦ AI narrated' : 'Built-in narration'),
         st.note ? el('span', { class: 'muted small story-note' }, st.note) : null, el('span', { class: 'grow' }),
-        speakBtn, autoBtn,
+        themeSel, voiceBtn, speakBtn, autoBtn,
         btn('Full screen', () => (document.fullscreenElement ? document.exitFullscreen() : shade.requestFullscreen().catch(() => {})), { cls: 'sm', title: 'F' }),
         btn('Save as PDF', () => { stopSpeak(); document.body.classList.add('story-printing'); setTimeout(() => { window.print(); document.body.classList.remove('story-printing'); }, 100); }, { cls: 'sm', ic: 'download' }),
         btn('Close', close, { cls: 'sm', ic: 'x', title: 'Esc' })),
@@ -1843,6 +2095,25 @@ async function viewDashboard(main, r) {
     side.replaceChildren(el('div', { class: 'row' }, el('h3', { class: 'grow' }, 'Filters'), close), list,
       btn('Add filter', () => { S.D.filters.push({ id: dbUid('f'), label: 'New filter', type: 'select', dataset: S.D.datasets[0] && S.D.datasets[0].id }); S.dirty = true; draw(); drawFilters(); }, { cls: 'sm', ic: 'plus' }));
   }
+  function openThemes() {
+    const before = { look: S.D.look, custom: S.D.custom };
+    openDialog((closeD) => el('div', { class: 'dlg thp-dlg' },
+      el('div', { class: 'row' }, el('h2', { class: 'grow' }, 'Dashboard theme'), el('span', { class: 'muted small' }, 'Click to preview live. Background, cards, KPIs, charts and presentation follow the theme.')),
+      dbThemeGallery(S.D.look || 'clean', (id) => { S.D.look = id; S.D.custom = {}; S.D.theme = 'auto'; S.dirty = true; applyLook(); drawGrid(); }),
+      el('div', { class: 'actions' }, btn('Cancel', () => { S.D.look = before.look; S.D.custom = before.custom; applyLook(); drawGrid(); closeD(null); }),
+        btn('Use this theme', () => { closeD(true); if (side && !side.hidden) openSide('settings'); }, { cls: 'primary' }))), { wide: true });
+  }
+  async function saveThemeAs() {
+    const v = await formDialog({ title: 'Save as my theme', submit: 'Save', text: 'Saves the current theme with your colours so every dashboard (and presentations) can use it.',
+      fields: [{ name: 'name', label: 'Theme name', value: `${theme().name} (custom)` }] });
+    if (!v || !v.name.trim()) return;
+    const base = DB_THEME_BY_ID[S.D.look] ? S.D.look : (DB_USER_THEMES.find((u) => u.id === S.D.look) || {}).base || 'clean';
+    const baseCustom = DB_THEME_BY_ID[S.D.look] ? {} : ((DB_USER_THEMES.find((u) => u.id === S.D.look) || {}).custom || {});
+    try {
+      const t = await api('/api/dashboard-themes', { method: 'POST', body: { name: v.name.trim(), base, custom: { ...baseCustom, ...(S.D.custom || {}) } } });
+      await dbLoadUserThemes(); S.D.look = t.id; S.D.custom = {}; S.dirty = true; applyLook(); drawGrid(); openSide('settings'); toast(`Saved theme "${t.name}"`);
+    } catch (e) { toast(e.message, 'err'); }
+  }
   function sideSettings(close) {
     const name = el('input', { class: 'field', value: S.name }); name.addEventListener('input', () => { S.name = name.value; titleEl.textContent = S.name; S.dirty = true; });
     const desc = el('input', { class: 'field', value: dash.description || '' }); desc.addEventListener('input', () => { dash.description = desc.value; S.dirty = true; });
@@ -1850,11 +2121,22 @@ async function viewDashboard(main, r) {
     const allCols = [...new Set(Object.values(S.results).flatMap((x) => x.columns))];
     side.replaceChildren(el('div', { class: 'row' }, el('h3', { class: 'grow' }, 'Dashboard settings'), close),
       field('Name', name), field('Description', desc), field('Currency symbol', curIn),
-      field('Dashboard style', selectOf(Object.entries(DB_LOOKS), S.D.look || 'clean', (v) => { S.D.look = v; S.D.theme = 'auto'; S.dirty = true; drawGrid(); openSide('settings'); }),
-        'Background, cards, title bar and chart colours together.'),
+      el('div', { class: 'pl-sec' }, 'Theme'),
+      el('div', { class: 'thm-cur' }, el('div', { class: 'thm-cur-prev' }, dbThemeCard(theme(), false, () => openThemes(), DB_USER_THEMES.find((u) => u.id === S.D.look)?.name || theme().name)),
+        btn('Browse 26 themes', () => openThemes(), { cls: 'sm primary', ic: 'chart' })),
+      el('details', { class: 'thm-cust', open: !!(S.D.custom && Object.keys(S.D.custom).length) }, el('summary', {}, 'Customize colours, corners, glass, font'),
+        dbThemeCustomizer(S.D, (redraw) => { S.dirty = true; applyLook(); drawGrid(); if (redraw) openSide('settings'); }, canEdit ? saveThemeAs : null)),
       field('KPI cards look like', selectOf(Object.entries(DB_KPI_STYLES), S.D.kpiStyle || 'tinted', (v) => { S.D.kpiStyle = v; S.dirty = true; drawGrid(); })),
       el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: !!S.D.fitScreen, onChange: (e) => { S.D.fitScreen = e.target.checked; S.dirty = true; drawBar(); } }), 'Fit to screen in view mode (one page, no scrolling)'),
-      field('Chart colours', selectOf([['auto', 'Match the style'], ['vivid', 'Vivid'], ['ocean', 'Ocean'], ['sunset', 'Sunset'], ['forest', 'Forest'], ['neon', 'Neon'], ['aurora', 'Aurora'], ['mono', 'Single blue']], S.D.theme || 'auto', (v) => { S.D.theme = v; S.dirty = true; drawGrid(); })),
+      field('Chart colours', selectOf([['auto', 'Match the theme'], ['vivid', 'Vivid'], ['ocean', 'Ocean'], ['sunset', 'Sunset'], ['forest', 'Forest'], ['neon', 'Neon'], ['aurora', 'Aurora'], ['mono', 'Single blue']], S.D.theme || 'auto', (v) => { S.D.theme = v; S.dirty = true; drawGrid(); })),
+      el('div', { class: 'pl-sec' }, 'Chart style'),
+      (() => { const cs = dbChartStyle(S.D, theme()); const set = (k, v) => { S.D.chartStyle = { ...(S.D.chartStyle || {}), [k]: v }; S.dirty = true; drawGrid(); };
+        return el('div', {}, el('div', { class: 'grid2' },
+          field('Bars', selectOf([['rounded', 'Rounded'], ['pill', 'Pill'], ['square', 'Square']], cs.bars, (v) => set('bars', v))),
+          field('Lines', selectOf([['smooth', 'Smooth curves'], ['straight', 'Straight']], cs.lines, (v) => set('lines', v))),
+          field('Area fill', selectOf([['gradient', 'Gradient'], ['solid', 'Solid tint'], ['none', 'None']], cs.fill, (v) => set('fill', v)))),
+          el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: cs.grid, onChange: (e) => set('grid', e.target.checked) }), 'Grid lines'),
+          el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: cs.points, onChange: (e) => set('points', e.target.checked) }), 'Data points on lines')); })(),
       el('div', { class: 'pl-sec' }, 'Period comparison'),
       el('p', { class: 'pl-hint' }, `Each dataset uses its own date / time column (set in Datasets). ${allCols.length} columns available.`),
       field('Periods end on', selectOf([['data', 'Latest date in the data'], ['today', 'Today']], S.D.period.anchor || 'data', (v) => { S.D.period.anchor = v; S.dirty = true; drawPeriod(); drawGrid(); })),
@@ -1936,7 +2218,7 @@ async function viewDashboard(main, r) {
     crossEl.before(box);
   }
   await loadAll();
-  const onTheme = () => drawGrid();
+  const onTheme = () => { applyLook(); drawGrid(); };
   let fitT;
   const onResize = () => { if (!S.D.fitScreen || S.edit) return; clearTimeout(fitT); fitT = setTimeout(drawGrid, 150); };
   window.addEventListener('resize', onResize);

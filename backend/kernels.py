@@ -325,10 +325,14 @@ def __clean(v):
     if type(v).__name__ == "Decimal":          # DECIMAL columns (money) -> numbers, not text
         f = float(v)
         return int(f) if f.is_integer() and abs(f) < 2**53 else f
+    if hasattr(v, "asDict"):                   # STRUCT -> dict of fields (a Row is a tuple, so check it first)
+        return {{k: __clean(x) for k, x in v.asDict(recursive=False).items()}}
     if isinstance(v, (list, tuple)):
         return [__clean(x) for x in v]
     if isinstance(v, dict):
         return {{str(k): __clean(x) for k, x in v.items()}}
+    if isinstance(v, (bytes, bytearray)):
+        return v.hex()
     return v
 __stmts = [s for s in {json.dumps(query)}.split(';') if s.strip()]
 __df = None

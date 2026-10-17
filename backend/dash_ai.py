@@ -10,7 +10,8 @@ import uuid
 
 from fastapi import HTTPException
 
-from . import assistant, catalog
+from . import assistant, catalog, dash_model
+from . import fastsql
 from .kernels import SqlError, run_sql
 
 DASH_KERNEL = "__dashboards__"
@@ -32,6 +33,11 @@ Pages: (e.g. Overview, Products, Customers — or "you decide")
 Period: (e.g. last 30 days compared with the previous 30 days)
 Style: (e.g. compact, executive summary first, details on a second page)"""
 
+
+
+async def _sql(sql, limit):
+    """DuckDB on the warehouse files when possible (fast, parallel); Spark otherwise."""
+    return await fastsql.query(sql, limit, lambda: run_sql(sql, limit, key=DASH_KERNEL, label="Dashboards"))
 
 def _uid(p):
     return p + uuid.uuid4().hex[:6]
@@ -59,6 +65,14 @@ async def list_tables():
 async def _columns(fq):
     """[(name, type)] via the catalog, falling back to a LIMIT 0 query."""
     db, tb = fq.split(".", 1)
+    if fastsql.enabled():                                  # instant: read the schema from the table files
+        try:
+            res = await asyncio.to_thread(fastsql.run, f"DESCRIBE {fq}", 500)
+            cols = [(r[0], str(r[1]).lower()) for r in res["rows"] if r[0]]
+            if cols:
+                return cols
+        except fastsql.NotFast:
+            pass
     try:
         t = await asyncio.wait_for(catalog.table(db, tb), 30)
         cols = [(c["name"], (c.get("type") or "").lower()) for c in t.get("columns", []) if c.get("name") and not str(c["name"]).startswith("#")]
@@ -66,7 +80,7 @@ async def _columns(fq):
             return cols
     except Exception:  # noqa: BLE001
         pass
-    res = await run_sql(f"DESCRIBE {fq}", 500, key=DASH_KERNEL, label="Dashboards")
+    res = await _sql(f"DESCRIBE {fq}", 500)
     return [(r[0], str(r[1]).lower()) for r in res["rows"] if r[0] and not str(r[0]).startswith("#")]
 
 
@@ -81,9 +95,9 @@ async def profile(fq):
         if any(typ.startswith(t) for t in NUM_TYPES) or typ in ("date", "timestamp") or typ.startswith("timestamp"):
             parts.append(f"CAST(min({q}) AS STRING) AS {_q('mn__' + name)}")
             parts.append(f"CAST(max({q}) AS STRING) AS {_q('mx__' + name)}")
-    stats = await run_sql(f"SELECT {', '.join(parts)} FROM {fq}", 1, key=DASH_KERNEL, label="Dashboards")
+    stats = await _sql(f"SELECT {', '.join(parts)} FROM {fq}", 1)
     row = dict(zip(stats["columns"], stats["rows"][0])) if stats["rows"] else {}
-    sample = await run_sql(f"SELECT * FROM {fq} LIMIT 3", 3, key=DASH_KERNEL, label="Dashboards")
+    sample = await _sql(f"SELECT * FROM {fq} LIMIT 3", 3)
     n = int(row.get("__n") or 0)
     out = []
     for name, typ in cols:
@@ -96,7 +110,7 @@ async def profile(fq):
     for c in out:                                          # actual values of small categories (stages, regions, channels)
         if c["kind"] == "cat" and 0 < c["distinct"] <= 12:
             try:
-                vr = await run_sql(f"SELECT {_q(c['name'])}, COUNT(*) FROM {fq} GROUP BY 1 ORDER BY 2 DESC LIMIT 12", 12, key=DASH_KERNEL, label="Dashboards")
+                vr = await _sql(f"SELECT {_q(c['name'])}, COUNT(*) FROM {fq} GROUP BY 1 ORDER BY 2 DESC LIMIT 12", 12)
                 c["values"] = [str(r[0]) for r in vr["rows"] if r[0] is not None]
             except Exception:  # noqa: BLE001
                 pass
@@ -202,14 +216,49 @@ def _extract_json(text):
     return json.loads(text[start:end + 1])
 
 
-async def llm_plan(prompt, profiles, rels=None):
-    schema = [{"table": p["table"], "rows": p["rows"],
+DENSITY = {"compact": "a compact one-screen dashboard: 4 KPI cards and 4-6 charts",
+           "standard": "a full one-page dashboard: 6 KPI cards and 6-9 charts, details on a second page",
+           "detailed": "a detailed multi-page dashboard: an Overview page (6 KPIs + 6-9 charts) and 2-3 more pages that each analyse one "
+                       "angle in depth (e.g. by location, by product/category, by time pattern, by people/team) with 4-8 charts each, plus a Details page"}
+
+
+def _grain(p):
+    keys = [c["name"] for c in p["columns"] if p["rows"] and c["distinct"] >= 0.98 * p["rows"] and c["kind"] in ("id", "num", "cat", "text")]
+    return f"one row per {keys[0]}" if keys else "no unique key column"
+
+
+async def llm_plan(prompt, profiles, rels=None, ctx=None):
+    ctx = ctx or {}
+    schema = [{"table": p["table"], "rows": p["rows"], "grain": _grain(p),
                "columns": [{k: c.get(k) for k in ("name", "type", "kind", "distinct", "min", "max", "examples", "values") if c.get(k) is not None} for c in p["columns"]]}
               for p in profiles]
-    msgs = [{"role": "system", "content": SYSTEM},
-            {"role": "user", "content": f"Tables (profiled):\n{json.dumps(schema, default=str)[:24000]}\n\nRelationships:\n{json.dumps(rels or [])}\n\nRequest:\n{prompt}"}]
-    text = await assistant.complete(msgs, max_tokens=6000)
+    domain = ctx.get("domain") if ctx.get("domain") not in (None, "", "auto") else dash_model.detect_domain(profiles)
+    parts = [f"Tables (profiled):\n{json.dumps(schema, default=str)[:22000]}",
+             "Relationships (verified joins: from.table.column -> to.table.column, many-to-one):\n" + json.dumps(rels or []),
+             dash_model.domain_brief(domain)]
+    if ctx.get("context"):
+        parts.append("Business context from the user (follow it — it defines what matters and how the business works):\n" + ctx["context"][:5000])
+    if ctx.get("metrics"):
+        parts.append("Metric definitions (use EXACTLY these formulas; compute them as columns in the dataset SQL, e.g. SUM(a) - SUM(b) AS metric, "
+                     "and name the KPI with the metric name):\n" + "\n".join(f"- {m['name']}: {m['definition']}" for m in ctx["metrics"]))
+    parts.append(f"Size: design {DENSITY.get(ctx.get('density') or 'standard')}.")
+    parts.append(f"Request:\n{prompt}")
+    msgs = [{"role": "system", "content": SYSTEM + ACCURACY}, {"role": "user", "content": "\n\n".join(p for p in parts if p)}]
+    text = await assistant.complete(msgs, max_tokens=7000)
     return _extract_json(text)
+
+
+ACCURACY = """
+Accuracy rules (most important):
+- Know each table's grain. Never SUM a column from the "one" side of a join after joining to the "many" side (it double-counts);
+  aggregate the fact table first, or only join lookup tables to bring in category columns.
+- Only join on the relationships given. Use LEFT JOIN from the fact table to lookup tables so totals do not drop rows.
+- Averages, rates, scores, prices, durations and percentages must use agg "avg" (or a ratio computed in SQL), never "sum".
+- Ratios (e.g. average check, attrition %, conversion rate) must be computed as SUM(numerator) / SUM(denominator) in the dataset SQL
+  at the grain the chart needs; do not average pre-computed ratios.
+- Counts of entities (customers, employees, orders) use COUNT(DISTINCT key) in SQL, not COUNT(*) after a join.
+- Titles must say exactly what is measured, with units where useful (e.g. "Net sales (₹)", "Attrition %").
+- Every chart must answer a business question for this domain; prefer fewer, correct charts over many vague ones."""
 
 
 # ------------------------------------------------------------------ relationships between tables
@@ -290,7 +339,7 @@ def _mentioned(prompt, cols):
     return [c for c in cols if c["name"].lower().replace("_", " ") in low]
 
 
-def rule_plan(prompt, profiles, rels=None):
+def rule_plan(prompt, profiles, rels=None, density="standard"):
     low = prompt.lower()
     pages = [{"id": "p1", "name": "Overview"}]
     datasets, widgets, filters = [], [], []
@@ -404,6 +453,28 @@ def rule_plan(prompt, profiles, rels=None):
         elif dims and stage:
             widgets.append({"type": "bar", "page": page, "title": f"{noun} by {stage['name'].replace('_', ' ')} and {dims[0]['name'].replace('_', ' ')}", "dataset": ds,
                             "x": dims[0]["name"], "series": stage["name"], "y": [count_y], "agg": count_agg, "stacked": True, "format": "integer", "size": "M"})
+        if density == "detailed" and dims:                  # one extra page per main category with its own breakdowns
+            for c in dims[:3]:
+                pid = f"p_{ti}_{c['name']}"
+                pages.append({"id": pid, "name": f"By {c['name'].replace('_', ' ')}"})
+                widgets.append({"type": "hbar", "page": pid, "title": f"{main_title} by {c['name'].replace('_', ' ')}", "dataset": ds, "x": c["name"],
+                                "y": main_y, "agg": main_agg, "sort": "value_desc", "top": 15, "format": main_fmt, "size": "M"})
+                if dates:
+                    widgets.append({"type": "line", "page": pid, "title": f"{main_title} over time by {c['name'].replace('_', ' ')}", "dataset": ds,
+                                    "x": dates[0]["name"], "series": c["name"], "y": main_y[:1], "agg": main_agg, "format": main_fmt, "size": "M"})
+                for m in add_m[1:3]:
+                    widgets.append({"type": "bar", "page": pid, "title": f"{nice(m)} by {c['name'].replace('_', ' ')}", "dataset": ds, "x": c["name"],
+                                    "y": [m["name"]], "agg": "sum", "sort": "value_desc", "top": 12, "format": "compact", "size": "S"})
+                for m in avg_m[:1]:
+                    widgets.append({"type": "bar", "page": pid, "title": f"Avg {m['name'].replace('_', ' ')} by {c['name'].replace('_', ' ')}", "dataset": ds,
+                                    "x": c["name"], "y": [m["name"]], "agg": "avg", "sort": "value_desc", "format": "compact", "size": "S"})
+        elif density == "compact":
+            keep_types = {"kpi": 4, "chart": 4}
+            page_ws = [w for w in widgets if w["page"] == page]
+            charts = [w for w in page_ws if w["type"] not in ("kpi", "insights", "table")]
+            kp = [w for w in page_ws if w["type"] == "kpi"]
+            drop = {id(w) for w in kp[keep_types["kpi"]:]} | {id(w) for w in charts[keep_types["chart"]:]}
+            widgets[:] = [w for w in widgets if id(w) not in drop]
         for c in cats[:2]:
             if ti == 0:
                 filters.append({"label": nice(c), "type": "select", "dataset": ds, "column": c["name"]})
@@ -452,7 +523,7 @@ async def validate(plan, profiles, warnings):
         if not sql:
             continue
         try:
-            res = await asyncio.wait_for(run_sql(f"SELECT * FROM ({sql}) _q LIMIT 50", 50, key=DASH_KERNEL, label="Dashboards"), 300)
+            res = await asyncio.wait_for(_sql(f"SELECT * FROM ({sql}) _q LIMIT 50", 50), 300)
             cols = res["columns"]
         except (SqlError, asyncio.TimeoutError, HTTPException) as e:
             table = next((p["table"] for p in profiles if p["table"].lower() in sql.lower()), None)
@@ -462,7 +533,7 @@ async def validate(plan, profiles, warnings):
                 continue
             warnings.append(f"Dataset “{d.get('name', did)}” query failed ({reason}); used the whole table {table} instead.")
             sql = f"SELECT * FROM {table} LIMIT 5000"
-            res = await run_sql(f"SELECT * FROM ({sql}) _q LIMIT 50", 50, key=DASH_KERNEL, label="Dashboards")
+            res = await _sql(f"SELECT * FROM ({sql}) _q LIMIT 50", 50)
             cols = res["columns"]
         ds_cols[did] = cols
         tc = _match(d.get("timeColumn"), cols)
@@ -470,7 +541,7 @@ async def validate(plan, profiles, warnings):
             tc = next((c for c in cols if kinds.get(c) == "date"), None)
         rows_est = None
         try:
-            cres = await asyncio.wait_for(run_sql(f"SELECT COUNT(*) FROM ({sql}) _c", 1, key=DASH_KERNEL, label="Dashboards"), 300)
+            cres = await asyncio.wait_for(_sql(f"SELECT COUNT(*) FROM ({sql}) _c", 1), 300)
             rows_est = int(cres["rows"][0][0])
             if rows_est > 5000:
                 warnings.append(f"Dataset “{d.get('name', did)}” returns {rows_est:,} rows; dashboards use the first 5,000 — consider aggregating it.")
@@ -673,11 +744,7 @@ def layout(defn):
 
 
 # ------------------------------------------------------------------ entry point
-async def plan(prompt, tables=None, use_ai=True, schema=None):
-    """Design a dashboard (not saved): profile tables, plan with AI (or rules), validate, lay out."""
-    prompt = (prompt or "").strip()
-    if len(prompt) < 5:
-        prompt = "Build a complete overview dashboard: you decide the KPIs, charts, panels and filters."
+async def _profiles_for(prompt, tables, schema, warnings):
     available = await list_tables()
     if schema and not tables:
         tables = [t for t in available if t.split(".", 1)[0] == schema]
@@ -686,26 +753,69 @@ async def plan(prompt, tables=None, use_ai=True, schema=None):
                 tables = [f"{schema}.{t['name']}" for t in await catalog.tables(schema)]
             except Exception:  # noqa: BLE001
                 tables = []
-    chosen = _pick_tables(prompt, tables or [], available)
+    chosen = _pick_tables(prompt or "", tables or [], available)
     if not chosen:
         raise HTTPException(400, "No tables found. Pick a schema or tables, or name them in the prompt (e.g. gold.sales).")
-    profiles, warnings = [], []
-    for t in chosen[:6]:
+    profiles = []
+    for t in chosen[:8]:
         try:
             profiles.append(await profile(t))
         except Exception as e:  # noqa: BLE001
             warnings.append(f"Could not read {t}: {str(getattr(e, 'detail', e))[:150]}")
-    if len(chosen) > 6:
-        warnings.append(f"Used the first 6 of {len(chosen)} tables — pick the ones that matter for a sharper dashboard.")
+    if len(chosen) > 8:
+        warnings.append(f"Used the first 8 of {len(chosen)} tables — pick the ones that matter for a sharper dashboard.")
     if not profiles:
         raise HTTPException(400, "None of the chosen tables could be read. " + " ".join(warnings))
-    rels = relationships(profiles)
+    return profiles
+
+
+def _merge_rels(auto, user, profiles):
+    """User relationships win; auto ones are kept unless the user removed them (listed with removed=True)."""
+    names = {p["table"] for p in profiles}
+    removed = {(r["from"], r["to"]) for r in user or [] if r.get("removed")}
+    out = [dict(r, source="user") for r in user or [] if not r.get("removed") and r["from"] in names and r["to"] in names]
+    for r in auto:
+        if (r["from"], r["to"]) not in removed and not any(x["from"] == r["from"] and x["to"] == r["to"] for x in out):
+            out.append(dict(r, source="auto"))
+    return out
+
+
+async def model(prompt="", tables=None, schema=None, ctx=None):
+    """Step 2 of the builder: tables, ERD, relationships, domain and saved business context, plus key checks."""
+    warnings = []
+    profiles = await _profiles_for(prompt, tables, schema, warnings)
+    key = dash_model.context_key([p["table"] for p in profiles], schema)
+    saved = dash_model.get_context(key)
+    ctx = ctx or saved
+    rels = _merge_rels(relationships(profiles), ctx.get("relationships"), profiles)
+    checks = await dash_model.reconcile(_sql, profiles, rels, None, ctx.get("rules"))
+    return {"key": key, "tables": [p["table"] for p in profiles], "erd": dash_model.erd(profiles, rels), "relationships": rels,
+            "domain": ctx.get("domain") or "auto", "detected_domain": dash_model.detect_domain(profiles), "domains": dash_model.domain_list(),
+            "context": ctx.get("context") or "", "metrics": ctx.get("metrics") or [], "rules": ctx.get("rules") or [],
+            "density": ctx.get("density") or "standard", "checks": checks, "summary": dash_model.summary(checks), "warnings": warnings,
+            "profiles": [{"table": p["table"], "rows": p["rows"], "grain": _grain(p), "columns": [{k: c.get(k) for k in ("name", "type", "kind", "distinct", "values")} for c in p["columns"]]} for p in profiles]}
+
+
+async def plan(prompt, tables=None, use_ai=True, schema=None, ctx=None, save_ctx=True):
+    """Design a dashboard (not saved): profile tables, plan with AI (or rules), validate, reconcile, lay out."""
+    ctx = ctx or {}
+    prompt = (prompt or "").strip()
+    if len(prompt) < 5:
+        prompt = "Build a complete overview dashboard: you decide the KPIs, charts, panels and filters."
+    warnings = []
+    profiles = await _profiles_for(prompt, tables, schema, warnings)
+    key = dash_model.context_key([p["table"] for p in profiles], schema)
+    if not ctx:
+        ctx = dash_model.get_context(key)
+    elif save_ctx:
+        ctx = dash_model.save_context(key, ctx)
+    rels = _merge_rels(relationships(profiles), ctx.get("relationships"), profiles)
     the_plan, used_ai = None, False
     if use_ai:
         try:
             st = await assistant.status()
             if st.get("ok"):
-                the_plan = await llm_plan(prompt, profiles, rels)
+                the_plan = await llm_plan(prompt, profiles, rels, ctx)
                 used_ai = True
             else:
                 warnings.append("AI is not configured (Admin › Settings › Dora), so the built-in designer was used.")
@@ -713,12 +823,31 @@ async def plan(prompt, tables=None, use_ai=True, schema=None):
             warnings.append(f"The AI plan could not be used ({str(e)[:140]}); the built-in designer was used instead.")
             the_plan = None
     if the_plan is None:
-        the_plan = rule_plan(prompt, profiles, rels)
+        the_plan = rule_plan(prompt, profiles, rels, ctx.get("density") or "standard")
     defn = await validate(the_plan, profiles, warnings)
     layout(defn)
+    checks = await dash_model.reconcile(_sql, profiles, rels, defn["datasets"], ctx.get("rules"))
+    domain = ctx.get("domain") if ctx.get("domain") not in (None, "", "auto") else dash_model.detect_domain(profiles)
+    defn["model"] = {"tables": [p["table"] for p in profiles], "relationships": rels, "rules": ctx.get("rules") or [], "domain": domain,
+                     "key": key, "erd": dash_model.erd(profiles, rels)}
     return {"name": str(the_plan.get("name") or "AI dashboard")[:80], "description": str(the_plan.get("description") or prompt)[:300],
             "definition": defn, "warnings": warnings, "used_ai": used_ai, "tables": [p["table"] for p in profiles],
-            "relationships": rels, "profiles": [{"table": p["table"], "rows": p["rows"], "columns": len(p["columns"])} for p in profiles]}
+            "relationships": rels, "domain": domain, "checks": checks, "summary": dash_model.summary(checks), "erd": defn["model"]["erd"],
+            "profiles": [{"table": p["table"], "rows": p["rows"], "columns": len(p["columns"])} for p in profiles]}
+
+
+async def reconcile_dashboard(defn):
+    """Re-run the reconciliation checks of a saved dashboard (its model + datasets)."""
+    m = defn.get("model") or {}
+    tables = m.get("tables") or []
+    if not tables:
+        tables = sorted({t for d in defn.get("datasets") or [] for t in re.findall(r"\b(?:from|join)\s+([A-Za-z_]\w*\.[A-Za-z_]\w*)", d.get("sql") or "", re.I)})
+    warnings = []
+    profiles = await _profiles_for("", tables, None, warnings) if tables else []
+    rels = _merge_rels(relationships(profiles), m.get("relationships"), profiles) if profiles else []
+    checks = await dash_model.reconcile(_sql, profiles, rels, defn.get("datasets"), m.get("rules"))
+    return {"checks": checks, "summary": dash_model.summary(checks), "erd": dash_model.erd(profiles, rels), "tables": [p["table"] for p in profiles],
+            "relationships": rels, "warnings": warnings, "domain": m.get("domain")}
 
 
 def compact(defn):
@@ -741,5 +870,5 @@ def compact(defn):
     return defn
 
 
-async def build(prompt, tables=None, use_ai=True, schema=None):
-    return await plan(prompt, tables, use_ai, schema)
+async def build(prompt, tables=None, use_ai=True, schema=None, ctx=None):
+    return await plan(prompt, tables, use_ai, schema, ctx)

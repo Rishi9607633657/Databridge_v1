@@ -1,0 +1,55 @@
+# DataBridge on the internet through Cloudflare Tunnel — no open ports, free HTTPS, your own domain.
+#   1. Copy .env.cloudflare.example to .env.cloudflare and paste your tunnel token
+#   2. docker compose --env-file .env.cloudflare up -d --build      (run inside deploy/cloudflare)
+#   3. Open https://<your hostname>  (sign in with the DataBridge admin you created)
+name: databridge
+
+services:
+  databridge:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: databridge:latest
+    restart: unless-stopped
+    env_file:
+      - ../../.env                      # your normal DataBridge settings (Admin › Settings writes here too)
+    environment:
+      STRATUM_HOST: 0.0.0.0
+      STRATUM_PORT: "8800"
+      STRATUM_ROOT: /app
+      AUTH_ENABLED: "true"              # never expose DataBridge without sign-in
+      FORWARDED_ALLOW_IPS: "*"          # trust X-Forwarded-Proto from cloudflared (only reachable inside this network)
+      STRATUM_SPARK_CONF: '{"spark.driver.memory": "${SPARK_DRIVER_MEMORY:-4g}"}'
+      # Ollama running on the host machine (Windows/Mac Docker Desktop):
+      DORA_BASE_URL: ${DORA_BASE_URL:-http://host.docker.internal:11434/v1}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ../../.env:/app/.env                      # settings saved from Admin › Settings survive restarts
+      - ../../workspace:/app/workspace            # notebooks + spark-warehouse (Delta tables)
+      - ../../secrets:/app/secrets:ro
+      - ../../jars:/app/jars
+      - databridge-state:/app/.stratum            # users, dashboards, syncs, runs, agent runs
+      - ivy-cache:/root/.ivy2                     # Spark/Delta jars downloaded once
+    ports:
+      - "127.0.0.1:8800:8800"                     # local access only; the internet comes in through the tunnel
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:8800/'); sys.exit(0)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?Set TUNNEL_TOKEN in .env.cloudflare (Cloudflare Zero Trust > Networks > Tunnels)}
+    depends_on:
+      databridge:
+        condition: service_healthy
+
+volumes:
+  databridge-state:
+  ivy-cache:

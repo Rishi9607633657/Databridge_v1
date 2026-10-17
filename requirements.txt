@@ -19,3 +19,13 @@ pyflakes>=3.0            # live error checking in notebooks
 black>=24.0              # Format cell (Python)
 sqlparse>=0.5            # Format cell (%sql)
 psutil>=5.9              # kernel memory + leftover JVM cleanup
+openpyxl>=3.1          # Data Hub: Excel import
+pyarrow>=14            # Data Hub: Parquet import
+psycopg[binary]>=3.1     # Data Hub: PostgreSQL connector
+pymysql>=1.1            # Data Hub: MySQL / MariaDB connector
+paramiko>=3.4           # Data Hub: SFTP connector
+# optional: pip install pymssql (SQL Server), oracledb (Oracle)
+edge-tts>=6.1           # Presenter: free neural voices (needs internet)
+duckdb>=1.1             # Dashboards: fast queries on Delta/Parquet files
+deltalake>=0.22         # Dashboards: read Delta tables without Spark
+pyyaml

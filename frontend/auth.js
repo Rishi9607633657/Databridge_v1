@@ -3,7 +3,7 @@
 
 let CURRENT_USER = null;
 let AUTH_INFO = { auth_enabled: false };
-const ROLE_LABEL = { admin: 'Admin', editor: 'Editor', viewer: 'Viewer' };
+const ROLE_LABEL = { super_admin: 'Super admin', admin: 'Admin', editor: 'Editor', viewer: 'Viewer' };
 const ROLE_HELP = { admin: 'Everything, including users, settings and connections', editor: 'Build and run notebooks, SQL, jobs, pipelines', viewer: 'Read-only: browse and view results' };
 
 /* Called by boot(). Resolves once a user is signed in (or auth is off). */
@@ -136,7 +136,7 @@ async function authUsersTab(main) {
     const fields = [
       ...(u ? [] : [{ name: 'username', label: 'Username', value: '' }]),
       { name: 'name', label: 'Full name', value: u ? u.name : '', required: false }, { name: 'email', label: 'Email (optional)', value: u ? u.email : '', required: false },
-      { name: 'role', label: 'Role', type: 'select', value: u ? u.role : 'editor', options: ['admin', 'editor', 'viewer'] },
+      { name: 'role', label: 'Role', type: 'select', value: u ? u.role : 'editor', options: (CURRENT_USER && CURRENT_USER.role === 'super_admin' ? ['super_admin'] : []).concat(['admin', 'editor', 'viewer']) },
       { name: 'password', type: 'password', label: u ? 'Reset password (leave empty to keep)' : 'Temporary password (user must change it)', value: '', required: !u },
       ...(u ? [{ name: 'active', label: 'Account', type: 'select', value: u.active ? 'active' : 'disabled', options: ['active', 'disabled'] }] : []),
     ];
