@@ -166,6 +166,9 @@ def cron_preview(expr, tz_name, n=5):
 def cluster_env(cluster: dict, job_name: str) -> dict:
     """Turn a job cluster definition into env vars consumed by config/spark_init.py."""
     c = cluster or {}
+    if c.get("cluster_id"):                                   # attach to a named cluster (Compute › Clusters)
+        from . import clusters
+        return clusters.kernel_env(c["cluster_id"], f"job-{job_name}", c.get("run_as") or "")
     conf = {}
     if c.get("driver_memory"):
         conf["spark.driver.memory"] = c["driver_memory"]

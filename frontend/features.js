@@ -10,9 +10,9 @@ const FEAT_ROUTE = {
   notebook: 'notebooks', catalog: 'catalog', sql: 'sql_editor', compute: 'compute', logs: 'logs',
   dashboards: 'dashboards', dashboard: 'dashboards', job: 'jobs', jobedit: 'jobs', run: 'jobs',
   pipeline: 'pipelines', prun: 'pipelines', workflow: 'airflow', workflows: ['jobs', 'airflow', 'pipelines'],
-  datahub: ['data_hub', 'airbyte'], agent: 'ai_agent',
+  datahub: ['data_hub', 'airbyte'], markets: 'markets',
 };
-const FEAT_NAV = { catalog: 'catalog', sql: 'sql_editor', compute: 'compute', logs: 'logs', dashboards: 'dashboards', workflows: ['jobs', 'airflow', 'pipelines'], datahub: ['data_hub', 'airbyte'], agent: 'ai_agent' };
+const FEAT_NAV = { catalog: 'catalog', sql: 'sql_editor', compute: 'compute', logs: 'logs', dashboards: 'dashboards', workflows: ['jobs', 'airflow', 'pipelines'], datahub: ['data_hub', 'airbyte'], markets: 'markets' };
 const featOk = (need) => (Array.isArray(need) ? need.some(dbFeat) : dbFeat(need));
 
 async function loadFeatures() {

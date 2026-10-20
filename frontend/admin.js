@@ -50,10 +50,11 @@ async function admHealth(main) {
 }
 
 const ADM_GROUPS = [
-  ['General', [['Server', 'gear', 'Port, sign-in, sessions and idle kernels']]],
-  ['AI', [['Dora (AI)', 'spark', 'The AI model used by Dora, Ask AI and dashboards'], ['AI Agent', 'bot', 'Pipeline agent model and where it may write'], ['Voice', 'play', 'Presenter voice (text to speech)']]],
-  ['Data', [['Spark', 'cpu', 'Spark engine, dashboard query engine, start-up'], ['Catalog', 'db', 'Hive metastore / catalog backend'], ['Storage', 'folder', 'ADLS / cloud storage access'], ['Data Hub', 'hub', 'Syncs, real-time and event triggers'], ['Connector catalog', 'download', 'Airbyte connectors built from GitHub — no Airbyte server']]],
-  ['Integrations', [['Airflow', 'wind', 'Airflow connection for workflows'], ['Airbyte', 'hub', 'Optional external Airbyte server (not needed)'], ['Kubernetes', 'cpu', 'Kubernetes clusters for jobs']]],
+  ['General', [['Server', 'gear', 'Port, sign-in, sessions and idle kernels'], ['Sign-up', 'user', 'Who can create an account and with which role'], ['Look & feel', 'spark', 'Design of the whole app (light / dark stays per user)']]],
+  ['AI', [['Dora (AI)', 'spark', 'The AI model used by Dora, Ask AI and dashboards'], ['Voice', 'play', 'Presenter voice (text to speech)']]],
+  ['Data', [['Spark', 'cpu', 'Spark engine, dashboard query engine, start-up'], ['Catalog', 'db', 'Hive metastore / catalog backend'], ['Storage', 'folder', 'ADLS / cloud storage access'], ['Data Hub', 'hub', 'Syncs, real-time and event triggers'], ['Connectors', 'download', 'Connector library, branding and licence policy']]],
+  ['Markets', [['Markets', 'chart', 'Indian stocks, mutual funds, forex and broker API keys']]],
+  ['Integrations', [['Airflow', 'wind', 'Airflow connection for workflows'], ['Kubernetes', 'cpu', 'Kubernetes clusters for jobs']]],
 ];
 
 async function admSettings(main) {
@@ -64,6 +65,8 @@ async function admSettings(main) {
   const values = {};                                     // key -> new value (unsaved)
   const byGroup = {};
   data.settings.forEach((s) => { (byGroup[s.group] = byGroup[s.group] || []).push(s); });
+  // legacy external connector server: only shown when it is already configured
+  if (byGroup['External connector server'] && !byGroup['External connector server'].some((x) => x.value)) delete byGroup['External connector server'];
   const known = new Set(ADM_GROUPS.flatMap(([, gs]) => gs.map(([g]) => g)));
   const cats = ADM_GROUPS.map(([c, gs]) => [c, gs.filter(([g]) => byGroup[g])]).filter(([, gs]) => gs.length);
   const other = Object.keys(byGroup).filter((g) => !known.has(g));
@@ -113,6 +116,7 @@ async function admSettings(main) {
       const opts = s.type.slice(5).split(',');
       input = el('select', { class: 'field', 'aria-label': s.label }, opts.map((o) => el('option', { value: o, selected: (v0 || s.default) === o }, o)));
       input.addEventListener('change', () => set(input.value));
+      if (s.key === 'UI_SKIN' && window.DBSkin) input.addEventListener('change', () => DBSkin.preview(input.value));   // live preview
       control = input;
     } else {
       input = el('input', { class: 'field', type: s.type === 'secret' ? 'password' : 'text', value: v0, placeholder: s.default ? `default: ${s.default}` : '', 'aria-label': s.label, autocomplete: 'off' });

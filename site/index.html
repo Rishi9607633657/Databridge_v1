@@ -1,0 +1,913 @@
+<!doctype html>
+<html lang="en-IN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DataBridge — the data platform you run yourself</title>
+<meta name="description" content="Connectors, Spark notebooks, SQL, Delta Lake tables, jobs, visual pipelines and AI-built dashboards in one app. Run it on a Windows PC, your own server or a free cloud VM.">
+<link rel="canonical" href="https://databridge-analytics.in/">
+<link rel="icon" href="assets/favicon.png" type="image/png">
+<meta property="og:type" content="website">
+<meta property="og:title" content="DataBridge — the data platform you run yourself">
+<meta property="og:description" content="582 connectors, notebooks, Spark SQL, Delta tables, jobs, pipelines and AI dashboards — on your PC, server or cloud.">
+<meta property="og:url" content="https://databridge-analytics.in/">
+<meta property="og:image" content="https://databridge-analytics.in/assets/og.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#0B1B3F">
+<link rel="preload" href="assets/shots/dashboard.webp" as="image" type="image/webp">
+<style>
+@font-face{font-family:'IBM Plex Sans';font-style:normal;font-display:swap;font-weight:100 700;src:url(assets/fonts/ibm-plex-sans-latin-ext-wght-normal.woff2) format('woff2-variations'),url(assets/fonts/ibm-plex-sans-latin-ext-wght-normal.woff2) format('woff2');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}
+@font-face{font-family:'IBM Plex Sans';font-style:normal;font-display:swap;font-weight:100 700;src:url(assets/fonts/ibm-plex-sans-latin-wght-normal.woff2) format('woff2-variations'),url(assets/fonts/ibm-plex-sans-latin-wght-normal.woff2) format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-display:swap;font-weight:400;src:url(assets/fonts/ibm-plex-mono-latin-ext-400-normal.woff2) format('woff2');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-display:swap;font-weight:400;src:url(assets/fonts/ibm-plex-mono-latin-400-normal.woff2) format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-display:swap;font-weight:500;src:url(assets/fonts/ibm-plex-mono-latin-ext-500-normal.woff2) format('woff2');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-display:swap;font-weight:500;src:url(assets/fonts/ibm-plex-mono-latin-500-normal.woff2) format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:'Bricolage Grotesque';font-style:normal;font-display:swap;font-weight:200 800;font-stretch:75% 100%;src:url(assets/fonts/bricolage-grotesque-latin-ext-standard-normal.woff2) format('woff2-variations'),url(assets/fonts/bricolage-grotesque-latin-ext-standard-normal.woff2) format('woff2');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}
+@font-face{font-family:'Bricolage Grotesque';font-style:normal;font-display:swap;font-weight:200 800;font-stretch:75% 100%;src:url(assets/fonts/bricolage-grotesque-latin-standard-normal.woff2) format('woff2-variations'),url(assets/fonts/bricolage-grotesque-latin-standard-normal.woff2) format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+:root{
+  --navy:#0B1B3F; --navy-2:#13285A; --navy-3:#1C3670; --blue:#0A5CFF; --blue-d:#0748CC; --cyan:#12CFF5; --turmeric:#F5B700;
+  --chalk:#EEF3FA; --paper:#FFFFFF; --ink:#0B1B3F; --ink-2:#34446A; --ink-3:#5E6E8C; --line:#D5DEEC; --line-2:#E4EAF4;
+  --display:"Bricolage Grotesque","IBM Plex Sans",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  --gutter:clamp(16px,4vw,48px); --max:1240px; --rail:104px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--chalk);color:var(--ink);font:400 17px/1.6 var(--body);text-rendering:optimizeLegibility;overflow-x:clip}
+img{max-width:100%;height:auto;display:block}
+a{color:var(--blue)}
+code{font:500 .86em var(--mono);background:#E3EAF6;color:var(--navy);padding:.1em .38em;border-radius:5px;white-space:nowrap}
+:focus-visible{outline:3px solid var(--cyan);outline-offset:3px;border-radius:6px}
+.skip{position:absolute;left:-9999px;top:8px;background:var(--paper);padding:8px 12px;border-radius:8px;z-index:20}
+.skip:focus{left:8px}
+.wrap{max-width:var(--max);margin:0 auto;padding:0 var(--gutter)}
+h1,h2,h3{font-family:var(--display);color:var(--navy);margin:0;font-optical-sizing:auto}
+h2{font-size:clamp(30px,4vw,48px);line-height:1.06;font-weight:700;font-stretch:88%;letter-spacing:-.014em;max-width:22ch;text-wrap:balance}
+h3{font-size:20px;line-height:1.25;font-weight:650;letter-spacing:-.008em}
+p{margin:0}
+.lede{color:var(--ink-2);font-size:clamp(17px,1.5vw,19px);max-width:62ch}
+.muted{color:var(--ink-3)}
+.plain{list-style:none;margin:0;padding:0}
+
+/* buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;height:50px;padding:0 24px;border-radius:12px;font:600 16px var(--body);text-decoration:none;cursor:pointer;border:2px solid transparent;transition:background .15s,border-color .15s,color .15s}
+.btn-primary{background:var(--blue);color:#fff}
+.btn-primary:hover{background:var(--blue-d)}
+.btn-quiet{background:transparent;color:var(--navy);border-color:var(--navy)}
+.btn-quiet:hover{background:var(--navy);color:#fff}
+.btn-light{background:#fff;color:var(--navy)}
+.btn-light:hover{background:var(--cyan)}
+.btn-ghost{background:transparent;color:#fff;border-color:rgba(255,255,255,.55)}
+.btn-ghost:hover{border-color:#fff;background:rgba(255,255,255,.08)}
+
+/* header */
+.top{position:sticky;top:0;z-index:10;background:color-mix(in srgb,var(--chalk) 90%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid transparent;transition:border-color .2s}
+.top.scrolled{border-bottom-color:var(--line)}
+.top .wrap{display:flex;align-items:center;gap:26px;height:70px}
+.brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--navy)}
+.brand img{width:36px;height:36px}
+.brand span{font:800 23px var(--display);font-stretch:90%;letter-spacing:-.02em}
+.brand b{font-weight:800;background:linear-gradient(90deg,var(--blue),var(--cyan));-webkit-background-clip:text;background-clip:text;color:transparent}
+.nav{display:flex;gap:22px;margin-left:8px}
+.nav a{color:var(--ink-2);text-decoration:none;font-weight:500;font-size:15px}
+.nav a:hover{color:var(--navy)}
+.top .grow{flex:1}
+.signin{color:var(--navy);font-weight:600;text-decoration:none;font-size:15px}
+.top .btn{height:42px;padding:0 18px;font-size:15px;border-radius:10px}
+@media (max-width:1060px){.nav{display:none}}
+@media (max-width:520px){.signin{display:none}.brand span{font-size:20px}.top .btn{padding:0 14px}}
+
+/* hero */
+.hero{padding:clamp(40px,6vw,84px) 0 0}
+.hero-copy{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:clamp(24px,4vw,64px);align-items:end}
+.hero h1{font-size:clamp(46px,7.4vw,100px);line-height:.94;font-weight:760;font-stretch:80%;letter-spacing:-.02em;text-wrap:balance}
+.hero .side{padding-bottom:8px}
+.cta{display:flex;flex-wrap:wrap;gap:12px;margin-top:28px}
+.familiar{margin-top:22px;color:var(--ink-3);font-size:15px;max-width:52ch}
+.stage{position:relative;margin-top:clamp(36px,5vw,64px);padding-bottom:clamp(40px,6vw,80px)}
+@media (max-width:900px){.hero-copy{grid-template-columns:1fr}}
+
+/* framed screenshots */
+.frame{margin:0;border-radius:14px;overflow:hidden;background:var(--paper);box-shadow:0 28px 56px -24px rgba(11,27,63,.38),0 0 0 1px rgba(11,27,63,.09)}
+.frame img{width:100%}
+figure{margin:0}
+figcaption{margin-top:12px;color:var(--ink-3);font-size:14.5px;line-height:1.5;max-width:70ch}
+.frame + figcaption{padding:0 2px}
+
+.zoom{display:block;cursor:zoom-in}
+.lb{border:0;padding:0;background:transparent;max-width:min(96vw,1700px);width:100%;margin:auto}
+.lb::backdrop{background:rgba(6,14,34,.86)}
+.lb img{width:100%;border-radius:10px;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+.lb button{position:fixed;top:14px;right:14px;height:44px;padding:0 18px;border-radius:999px;border:0;background:#fff;color:var(--navy);font:600 15px var(--body);cursor:pointer}
+.lb p{color:#C9D4EA;margin-top:12px;font-size:15px;text-align:center}
+
+/* the route map (sequence of the platform) */
+.route{background:var(--navy);color:#C9D4EA;padding:clamp(56px,8vw,100px) 0}
+.route h2{color:#fff}
+.route .lede{color:#AFC0DE;margin-top:16px}
+.map{position:relative;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:0;margin-top:clamp(36px,5vw,56px);counter-reset:stop}
+.map::before{content:"";position:absolute;left:22px;right:22px;top:21px;height:3px;border-radius:3px;background:linear-gradient(90deg,var(--blue),var(--cyan))}
+.map a{position:relative;display:flex;flex-direction:column;gap:6px;padding:0 14px 0 0;text-decoration:none;color:#C9D4EA}
+.map .dot{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:var(--navy);border:3px solid var(--cyan);color:#fff;font:700 18px var(--display);margin-bottom:12px;transition:background .15s,color .15s}
+.map a:hover .dot,.map a:focus-visible .dot{background:var(--cyan);color:var(--navy)}
+.map b{color:#fff;font:650 19px var(--display);letter-spacing:-.005em}
+.map span{font-size:14.5px;line-height:1.45}
+@media (max-width:1060px){
+  .map{grid-template-columns:1fr;gap:18px}
+  .map::before{left:20px;right:auto;top:22px;bottom:22px;width:3px;height:auto;background:linear-gradient(180deg,var(--blue),var(--cyan))}
+  .map a{display:grid;grid-template-columns:44px 1fr;column-gap:16px;padding:0}
+  .map .dot{grid-row:1/3;margin:0}
+}
+
+/* stops: one section per stop on the route, joined by a rail */
+.stops{position:relative}
+.stops .rail{position:absolute;z-index:1;top:0;bottom:0;left:calc(max(var(--gutter),(100% - var(--max))/2 + var(--gutter)) + 21px);width:3px;background:var(--line);border-radius:3px}
+.stops .rail i{position:absolute;inset:0 0 auto 0;height:0;background:linear-gradient(180deg,var(--blue),var(--cyan));border-radius:3px}
+.stop{position:relative;padding:clamp(64px,8vw,112px) 0;scroll-margin-top:70px}
+.stop.paper{background:var(--paper)}
+.stop > .wrap{display:grid;grid-template-columns:var(--rail) minmax(0,1fr)}
+.stop .num{position:sticky;top:96px;align-self:start;width:46px;height:46px;border-radius:50%;display:grid;place-items:center;background:var(--chalk);border:3px solid var(--line);color:var(--ink-3);font:700 19px var(--display);z-index:2;transition:border-color .25s,background .25s,color .25s}
+.stop.paper .num{background:var(--paper)}
+.stop.on .num{border-color:var(--blue);background:var(--blue);color:#fff}
+.stop .body{min-width:0}
+.stop .kicker{font:600 15px var(--body);color:var(--blue);margin-bottom:12px}
+.stop .lede{margin-top:18px}
+@media (max-width:860px){
+  .stops .rail{display:none}
+  .stop > .wrap{grid-template-columns:1fr}
+  .stop .num{position:static;margin-bottom:18px}
+}
+
+/* capability groups */
+.caps{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:30px 44px;margin-top:clamp(32px,4vw,48px)}
+.caps.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.cap h3{margin-bottom:8px;padding-top:16px;border-top:2px solid var(--navy);font-size:19px}
+.cap p,.cap li{color:var(--ink-2);font-size:16px}
+.cap ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:5px}
+.cap ul li::marker{color:var(--blue)}
+@media (max-width:860px){.caps,.caps.three{grid-template-columns:1fr}}
+.shots{display:grid;gap:clamp(24px,3vw,40px);margin-top:clamp(36px,5vw,56px)}
+.shots.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+@media (max-width:860px){.shots.two{grid-template-columns:1fr}}
+.note{margin-top:26px;padding:16px 18px;border-left:4px solid var(--turmeric);background:#FFF8E1;color:#5B4A12;font-size:15px;border-radius:0 10px 10px 0;max-width:80ch}
+
+/* connector ledger */
+.ledger{width:100%;border-collapse:collapse;margin-top:clamp(28px,4vw,44px);font-size:16px}
+.ledger th{text-align:left;font:600 14px var(--body);color:var(--ink-3);padding:0 16px 10px 0;border-bottom:2px solid var(--navy)}
+.ledger td{padding:18px 16px 18px 0;border-bottom:1px solid var(--line);vertical-align:top;color:var(--ink-2)}
+.ledger td:first-child{color:var(--navy);font-weight:600;width:22%}
+.ledger td.n{font:760 clamp(30px,3.4vw,44px)/1 var(--display);font-stretch:85%;color:var(--blue);width:13%;font-variant-numeric:tabular-nums;white-space:nowrap}
+.ledger tr.total td{border-bottom:0;padding-top:20px}
+.ledger tr.total td.n{color:var(--navy)}
+@media (max-width:700px){
+  .ledger thead{display:none}
+  .ledger,.ledger tbody,.ledger tr,.ledger td{display:block;width:auto !important}
+  .ledger tr{padding:16px 0;border-bottom:1px solid var(--line)}
+  .ledger td{border:0;padding:2px 0}
+  .ledger td.n{font-size:34px;margin:4px 0}
+}
+
+/* tenancy sketch */
+.tenancy{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:clamp(24px,4vw,56px);align-items:center;margin-top:clamp(40px,5vw,64px);padding:clamp(22px,3vw,36px);background:var(--paper);border-radius:18px;box-shadow:0 0 0 1px var(--line)}
+.stop.paper .tenancy{background:var(--chalk);box-shadow:none}
+.tenancy table{width:100%;border-collapse:collapse;font:400 13.5px/1.45 var(--mono);color:var(--ink-2)}
+.tenancy th{text-align:left;font-weight:500;color:var(--ink-3);padding:6px 8px;border-bottom:1.5px solid var(--line)}
+.tenancy td{padding:6px 8px;border-bottom:1px solid var(--line-2);white-space:nowrap}
+.tenancy td.t{color:var(--blue);font-weight:500}
+.tenancy td.b{color:#0E7C4A;font-weight:500}
+.tenancy .scroll{overflow-x:auto}
+@media (max-width:860px){.tenancy{grid-template-columns:1fr}}
+
+/* designs switcher */
+.designs{padding:clamp(64px,8vw,112px) 0;background:var(--paper);scroll-margin-top:70px}
+.designs .head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px;align-items:end}
+.picker{display:flex;flex-wrap:wrap;gap:10px;margin-top:clamp(28px,4vw,40px);align-items:center}
+.skin{display:inline-flex;align-items:center;gap:10px;height:44px;padding:0 16px 0 10px;border-radius:999px;border:1.5px solid var(--line);background:var(--paper);font:600 15px var(--body);color:var(--navy);cursor:pointer}
+.skin:hover{border-color:var(--ink-3)}
+.skin[aria-pressed=true]{border-color:var(--navy);box-shadow:inset 0 0 0 1.5px var(--navy)}
+.sw{width:24px;height:24px;border-radius:50%;flex:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}
+.mode{display:inline-flex;margin-left:auto;border:1.5px solid var(--line);border-radius:999px;padding:3px;gap:2px}
+.mode button{height:36px;padding:0 16px;border:0;border-radius:999px;background:transparent;font:600 14.5px var(--body);color:var(--ink-2);cursor:pointer}
+.mode button[aria-pressed=true]{background:var(--navy);color:#fff}
+.viewer{margin-top:22px}
+.viewer .frame{aspect-ratio:16/10;background:#DCE3EE}
+.viewer .frame img{height:100%;object-fit:cover;transition:opacity .2s}
+.viewer .frame img.fade{opacity:.35}
+.viewer figcaption b{color:var(--navy)}
+@media (max-width:700px){.designs .head{grid-template-columns:1fr}.mode{margin-left:0}}
+.looks{margin-top:clamp(56px,7vw,88px);display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.6fr);gap:clamp(24px,4vw,56px);align-items:start}
+.strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.strip figure{margin:0}
+.strip img{border-radius:10px;box-shadow:0 0 0 1px rgba(11,27,63,.1),0 12px 24px -14px rgba(11,27,63,.4)}
+.strip figcaption{margin-top:6px;font-size:13.5px}
+@media (max-width:860px){.looks{grid-template-columns:1fr}.strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* how it's built */
+.built{background:var(--navy);color:#C9D4EA;padding:clamp(64px,8vw,112px) 0;scroll-margin-top:70px}
+.built h2,.built h3{color:#fff}
+.built .lede{color:#AFC0DE;margin-top:18px}
+.stack{margin-top:clamp(36px,5vw,56px);display:grid;gap:10px}
+.layer{display:grid;grid-template-columns:200px minmax(0,1fr);gap:20px;align-items:stretch}
+.layer > h3{font:600 15px var(--body);color:#8FA6CF;padding-top:16px}
+.layer .row{display:grid;grid-template-columns:repeat(var(--n,4),minmax(0,1fr));gap:10px}
+.blk{background:var(--navy-2);border:1px solid var(--navy-3);border-radius:12px;padding:14px 16px}
+.blk b{display:block;color:#fff;font:650 16.5px/1.3 var(--display);margin-bottom:4px}
+.blk span{font-size:14.5px;line-height:1.45;color:#AFC0DE}
+.layer.server .blk{background:linear-gradient(135deg,#0A5CFF,#0A3FB8);border-color:transparent}
+.layer.server .blk span{color:#DCE7FF}
+.open{margin-top:28px;color:#AFC0DE;max-width:76ch}
+@media (max-width:960px){.layer{grid-template-columns:1fr;gap:8px}.layer > h3{padding-top:8px}.layer .row{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:520px){.layer .row{grid-template-columns:1fr}}
+
+/* why */
+.why{padding:clamp(64px,8vw,112px) 0;scroll-margin-top:70px}
+.reasons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:34px 56px;margin-top:clamp(32px,4vw,52px)}
+.reasons h3{font-size:clamp(22px,2.2vw,27px);font-stretch:90%;margin-bottom:8px}
+.reasons p{color:var(--ink-2)}
+@media (max-width:860px){.reasons{grid-template-columns:1fr}}
+
+/* deploy */
+.deploy{padding:clamp(64px,8vw,112px) 0;background:var(--paper);scroll-margin-top:70px}
+.ways{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-top:clamp(32px,4vw,48px)}
+.way{border:1.5px solid var(--line);border-radius:16px;padding:22px 24px;display:flex;flex-direction:column;gap:10px}
+.way p{color:var(--ink-2);font-size:16px}
+.way pre{margin:auto 0 0;background:var(--navy);color:#DCE7FF;font:500 14px/1.6 var(--mono);padding:12px 14px;border-radius:10px;overflow-x:auto}
+.way pre .c{color:#7F93BC}
+@media (max-width:860px){.ways{grid-template-columns:1fr}}
+
+/* pricing */
+.pricing{padding:clamp(64px,8vw,112px) 0;scroll-margin-top:70px}
+.plans{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:clamp(32px,4vw,48px)}
+.plan{background:var(--paper);border-radius:18px;padding:28px 26px;display:flex;flex-direction:column;gap:14px;box-shadow:0 0 0 1px var(--line)}
+.plan.lead{box-shadow:0 0 0 2px var(--blue),0 24px 48px -28px rgba(10,92,255,.6)}
+.plan h3{font-size:24px}
+.plan .price{font:760 34px/1 var(--display);font-stretch:85%;color:var(--navy)}
+.plan .price small{font:500 15px var(--body);color:var(--ink-3)}
+.plan ul{margin:0;padding-left:18px;color:var(--ink-2);font-size:15.5px;display:flex;flex-direction:column;gap:6px}
+.plan .btn{margin-top:auto}
+@media (max-width:960px){.plans{grid-template-columns:1fr}}
+
+/* faq */
+.faq{padding:0 0 clamp(64px,8vw,112px);scroll-margin-top:70px}
+.qs{margin-top:28px;border-top:2px solid var(--navy);max-width:900px}
+.qs details{border-bottom:1px solid var(--line)}
+.qs summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:20px;padding:18px 0;font:650 18.5px/1.35 var(--display);color:var(--navy)}
+.qs summary::-webkit-details-marker{display:none}
+.qs summary::after{content:"+";font:400 26px/1 var(--body);color:var(--blue);transition:transform .2s}
+.qs details[open] summary::after{transform:rotate(45deg)}
+.qs details p{padding:0 0 20px;color:var(--ink-2);max-width:72ch}
+
+/* closing */
+.closing{background:linear-gradient(120deg,var(--navy) 0%,#0B2D78 60%,#0A5CFF 140%);color:#C9D4EA;padding:clamp(64px,8vw,104px) 0}
+.closing h2{color:#fff;max-width:20ch}
+.closing .lede{color:#C3D2EE;margin-top:16px}
+.closing .cta{margin-top:30px}
+footer{background:var(--navy);color:#8FA2C6;font-size:14.5px;border-top:1px solid var(--navy-2)}
+footer .wrap{display:flex;flex-wrap:wrap;gap:14px 30px;align-items:center;padding-top:28px;padding-bottom:20px}
+footer a{color:#C9D4EA;text-decoration:none}
+footer a:hover{color:#fff}
+footer .brand{color:#fff}
+footer .grow{flex:1}
+footer .legal{padding-top:0;padding-bottom:32px;font-size:13px;color:#7083A8;display:block}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="#main" aria-label="DataBridge home"><img src="assets/logo-mark.png" alt="" width="36" height="36"><span>Data<b>Bridge</b></span></a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#route">Platform</a>
+      <a href="#connect">Connectors</a>
+      <a href="#analyse">Dashboards</a>
+      <a href="#designs">Designs</a>
+      <a href="#built">How it’s built</a>
+      <a href="#deploy">Deploy</a>
+      <a href="#pricing">Pricing</a>
+    </nav>
+    <span class="grow"></span>
+    <a class="signin" href="https://app.databridge-analytics.in/">Sign in</a>
+    <a class="btn btn-primary" href="https://app.databridge-analytics.in/#signup">Start free</a>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="hero" aria-labelledby="hero-title">
+  <div class="wrap">
+    <div class="hero-copy">
+      <h1 id="hero-title">The data platform you run yourself.</h1>
+      <div class="side">
+        <p class="lede">DataBridge puts connectors, Spark notebooks, SQL, Delta Lake tables, scheduled jobs and pipelines, and AI-built dashboards into one app. Install it on a Windows PC, your own server or a free cloud VM. Your data stays where you put it.</p>
+        <div class="cta">
+          <a class="btn btn-primary" href="https://app.databridge-analytics.in/#signup">Start a free 30-day pilot</a>
+          <a class="btn btn-quiet" href="mailto:hello@databridge-analytics.in?subject=DataBridge%20demo">Book a demo</a>
+        </div>
+        <p class="familiar">Familiar if you’ve used Databricks: notebooks with <code>%sql</code> and <code>dbutils</code>, Delta tables, multi-task jobs and Git folders.</p>
+      </div>
+    </div>
+    <div class="stage">
+      <figure class="front">
+        <div class="frame"><img src="assets/shots/dashboard.webp" alt="DataBridge dashboard: revenue, gross profit, orders and returns compared with the previous 30 days, a daily revenue chart with trend and forecast, smart insights, and revenue by region, category and channel" width="1600" height="1000" fetchpriority="high"></div>
+        <figcaption>A retail dashboard in DataBridge: comparison with the previous 30 days, a 14-day forecast with trend line, anomaly flags and insights written from the data. Sample data.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section class="route" id="route" aria-labelledby="route-title">
+  <div class="wrap">
+    <h2 id="route-title">Everything between your source systems and the decision</h2>
+    <p class="lede">Seven parts that share one catalog, one sign-in and one set of roles. Follow a table from the system it lives in to the slide your manager sees.</p>
+    <ol class="map plain" role="list">
+      <li><a href="#connect"><span class="dot">1</span><b>Connect</b><span>582 connectors, 10 native sources, file upload</span></a></li>
+      <li><a href="#sync"><span class="dot">2</span><b>Sync</b><span>Scheduled, real-time or event-driven; many tenants</span></a></li>
+      <li><a href="#store"><span class="dot">3</span><b>Store</b><span>Delta Lake catalog with history and time travel</span></a></li>
+      <li><a href="#build"><span class="dot">4</span><b>Build</b><span>Notebooks, Spark SQL, Git folders, AI help</span></a></li>
+      <li><a href="#orchestrate"><span class="dot">5</span><b>Orchestrate</b><span>Jobs, 12-activity pipelines, Airflow, Kubernetes</span></a></li>
+      <li><a href="#analyse"><span class="dot">6</span><b>Analyse</b><span>AI dashboard builder, 26 themes, presentations</span></a></li>
+      <li><a href="#operate"><span class="dot">7</span><b>Operate</b><span>Roles, sign-up approval, audit log, feature switches</span></a></li>
+    </ol>
+  </div>
+</section>
+
+<div class="stops" id="stops">
+  <div class="rail" aria-hidden="true"><i></i></div>
+
+  <!-- 1 CONNECT -->
+  <section class="stop paper" id="connect" aria-labelledby="connect-title">
+    <div class="wrap">
+      <span class="num" aria-hidden="true">1</span>
+      <div class="body">
+        <p class="kicker">Connect</p>
+        <h2 id="connect-title">582 connectors in the catalog, and nothing else to install</h2>
+        <p class="lede">Connectors run inside DataBridge. There is no separate ETL server to host or pay for: pick a source, fill in the form, test it, and choose the tables you want.</p>
+
+        <table class="ledger">
+          <thead><tr><th scope="col">Kind</th><th scope="col">How many</th><th scope="col">What you get</th></tr></thead>
+          <tbody>
+            <tr><td>Native sources</td><td class="n">10</td><td>PostgreSQL, MySQL, MariaDB, SQL Server, Oracle, SFTP, folders and network shares, file from a URL, Google Sheets, and any REST API — with page, offset, next-URL and cursor pagination, and nested JSON kept as structs.</td></tr>
+            <tr><td>Built-in connectors</td><td class="n">4</td><td>Toast, Clover, Restaurant365 and Revel (beta), written and maintained by us: multi-location, full history backfill and incremental sync to the second.</td></tr>
+            <tr><td>Connector library</td><td class="n">578</td><td>Community connectors across 20 categories — CRM and sales, payments, marketing and ads, e-commerce, finance, HR, support, product analytics, databases and warehouses and more. 522 work with no install; 59 are certified.</td></tr>
+            <tr><td>File import</td><td class="n">6</td><td>File formats: CSV, TSV/TXT, Excel (every sheet), JSON, JSON Lines and Parquet, up to 200 MB a file. Types and headers are detected; you rename, retype or skip columns before loading.</td></tr>
+          </tbody>
+        </table>
+
+        <div class="shots">
+          <figure>
+            <div class="frame"><img src="assets/shots/connectors.webp" alt="Connector catalog with 582 connectors, filters by category and type, and popular sources such as Stripe, Shopify, Google Sheets, HubSpot, Salesforce, QuickBooks, Xero and Zoho CRM" width="1600" height="1000" loading="lazy"></div>
+            <figcaption>The connector catalog. Search, filter by category, and see which connectors are ready to use right away.</figcaption>
+          </figure>
+        </div>
+        <p class="note">Library connectors are open-source community definitions, most under the Elastic License 2.0: free to run on your own servers, but they may not be resold as a hosted service. That is why our hosted plan includes the native, built-in and MIT-licensed connectors, and the full library comes with self-hosted installs.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2 SYNC -->
+  <section class="stop" id="sync" aria-labelledby="sync-title">
+    <div class="wrap">
+      <span class="num" aria-hidden="true">2</span>
+      <div class="body">
+        <p class="kicker">Sync</p>
+        <h2 id="sync-title">Keep every table current — on a schedule, every 15 seconds, or when something happens</h2>
+        <p class="lede">A sync copies the tables you choose into your catalog and remembers where it stopped, so the next run only fetches what changed.</p>
+        <div class="caps three">
+          <div class="cap">
+            <h3>When it runs</h3>
+            <ul>
+              <li>On demand, or every few minutes</li>
+              <li>Daily at a time you set</li>
+              <li>Real time: every 15 seconds or more</li>
+              <li>When new files land in a folder or on SFTP</li>
+              <li>When a webhook URL is called</li>
+              <li>Right after another sync finishes</li>
+            </ul>
+          </div>
+          <div class="cap">
+            <h3>How it writes</h3>
+            <ul>
+              <li>Full refresh, append, or upsert on key columns</li>
+              <li>Incremental on any “changed at” column</li>
+              <li>Long histories load in checkpoints and survive a restart</li>
+              <li>“Latest data” shows how far each table has got</li>
+              <li>Re-sync history in one click</li>
+              <li>Delta Lake or Parquet output</li>
+            </ul>
+          </div>
+          <div class="cap">
+            <h3>Shape it on the way in</h3>
+            <ul>
+              <li>Rename, drop and retype columns</li>
+              <li>Calculated columns with Spark expressions</li>
+              <li>Row filters</li>
+              <li>Flatten nested objects, explode arrays</li>
+              <li>Remove duplicates by key, keeping the newest row</li>
+              <li>Preview the result before you save</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="tenancy">
+          <div>
+            <h3>One setup, many customers</h3>
+            <p class="muted" style="margin-top:10px">Assign each connection to a tenant (a customer) and its businesses (brands, branches, stores). Every row is stamped with <code>tenant</code> and <code>business</code>, upsert keys include them, and a full refresh replaces only that tenant’s rows — so many customers can share one table safely. Prefer separation? Put <code>{tenant}</code> in the schema name and each customer gets their own.</p>
+          </div>
+          <div class="scroll" role="region" aria-label="Example rows in a shared table" tabindex="0">
+            <table>
+              <thead><tr><th scope="col">tenant</th><th scope="col">business</th><th scope="col">invoice_id</th><th scope="col">amount</th><th scope="col">updated_at</th></tr></thead>
+              <tbody>
+                <tr><td class="t">greenleaf</td><td class="b">andheri</td><td>A-10293</td><td>4,820.00</td><td>2026-10-15 09:41:07</td></tr>
+                <tr><td class="t">greenleaf</td><td class="b">bandra</td><td>B-55120</td><td>1,265.50</td><td>2026-10-15 09:41:12</td></tr>
+                <tr><td class="t">kite</td><td class="b">koramangala</td><td>K-00871</td><td>3,999.00</td><td>2026-10-15 09:40:58</td></tr>
+                <tr><td class="t">harbor</td><td class="b">online</td><td>W-77302</td><td>649.00</td><td>2026-10-15 09:41:15</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="shots two">
+          <figure>
+            <div class="frame"><img src="assets/shots/syncs.webp" alt="Syncs list showing schedules: daily at 02:00, real-time every 30 seconds, when new files arrive, every 15 minutes, and after another sync" width="1600" height="1000" loading="lazy"></div>
+            <figcaption>Syncs with their schedules, last run, rows written and how far each table has got.</figcaption>
+          </figure>
+          <figure>
+            <div class="frame"><img src="assets/shots/tenants.webp" alt="Tenants page with three customers and their businesses, each mapped to source IDs" width="1600" height="1000" loading="lazy"></div>
+            <figcaption>Tenants and their businesses, mapped to the IDs each source system uses.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 STORE -->
+  <section class="stop paper" id="store" aria-labelledby="store-title">
+    <div class="wrap">
+      <span class="num" aria-hidden="true">3</span>
+      <div class="body">
+        <p class="kicker">Store</p>
+        <h2 id="store-title">A catalog of Delta tables you can browse, profile and roll back</h2>
+        <p class="lede">Tables are stored as Delta Lake on Apache Spark and registered in a Hive metastore. Look before you trust: sample rows, a data profile, and the full change history are a click away.</p>
+        <div class="caps">
+          <div class="cap"><h3>Browse</h3><p>Schemas and tables, column types with nested structs shown as trees, sample data, table details and the DDL to recreate it.</p></div>
+          <div class="cap"><h3>Profile</h3><p>Outliers, skew, missing cells, duplicate rows and the role of every column — measure, dimension, date or ID — from a sample in seconds.</p></div>
+          <div class="cap"><h3>History and time travel</h3><p>Every write, merge and delete is listed. Look at the table as it was, compare two versions, or restore one.</p></div>
+          <div class="cap"><h3>Maintenance</h3><p>OPTIMIZE and Z-ORDER, VACUUM with a dry run first, RESTORE, liquid clustering and table properties — no SQL needed.</p></div>
+        </div>
+        <div class="shots">
+          <figure>
+            <div class="frame"><img src="assets/shots/catalog-eda.webp" alt="Catalog showing the profile of an orders table: 5,000 sampled rows, 15 columns, outliers in unit price and revenue, and columns grouped by role" width="1600" height="1000" loading="lazy"></div>
+            <figcaption>Profiling a table before building on it. The same page has sample data, history and maintenance.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 BUILD -->
+  <section class="stop" id="build" aria-labelledby="build-title">
+    <div class="wrap">
+      <span class="num" aria-hidden="true">4</span>
+      <div class="body">
+        <p class="kicker">Build</p>
+        <h2 id="build-title">Notebooks and SQL with everything a data team expects</h2>
+        <p class="lede">Each notebook gets its own Jupyter kernel with PySpark ready to go. Cells keep running on the server when you switch pages, and the results are saved even if nobody is watching.</p>
+        <div class="caps">
+          <div class="cap">
+            <h3>Notebooks</h3>
+            <ul>
+              <li><code>%sql</code>, <code>%md</code>, <code>%sh</code>, <code>%fs</code> and <code>%run</code> cells</li>
+              <li><code>display()</code> with table, chart and profile views</li>
+              <li><code>dbutils.widgets</code>, <code>dbutils.notebook.run</code> and <code>runMultiple</code>, <code>dbutils.fs</code></li>
+              <li>Live error checking, Black and SQL formatting, autocomplete, docs on hover</li>
+              <li>Revision history, variables panel, find and replace across cells</li>
+            </ul>
+          </div>
+          <div class="cap">
+            <h3>SQL editor</h3>
+            <ul>
+              <li>Spark SQL with a schema browser and query history</li>
+              <li>Run all or just the selected text; cancel long queries</li>
+              <li>Download results as CSV</li>
+              <li>Describe what you need and let Dora write the query</li>
+            </ul>
+          </div>
+          <div class="cap">
+            <h3>Git folders</h3>
+            <p>Clone from GitHub, GitLab, Azure DevOps, Bitbucket or any HTTPS remote. Switch and create branches, pull, review diffs, commit and push. Notebook outputs are stripped on commit, and tokens are never written into the repository’s config.</p>
+          </div>
+          <div class="cap">
+            <h3>Dora, the AI assistant</h3>
+            <p>Fix a failed cell, write SQL from a sentence, or ask questions in a chat panel on every page (Ctrl+J). Dora works with Ollama on your own machine — nothing leaves it — or any OpenAI-compatible service such as Groq, Google Gemini or OpenRouter.</p>
+          </div>
+        </div>
+        <div class="shots two">
+          <figure>
+            <div class="frame"><img src="assets/shots/notebook.webp" alt="Notebook running PySpark code with a display() result shown as a line chart of monthly revenue by sales channel" width="1600" height="1000" loading="lazy"></div>
+            <figcaption>A PySpark notebook. <code>display()</code> turns any DataFrame into a table, chart or profile.</figcaption>
+          </figure>
+          <figure>
+            <div class="frame"><img src="assets/shots/sql.webp" alt="SQL editor with a join query and results by region returned in 0.38 seconds" width="1600" height="1000" loading="lazy"></div>
+            <figcaption>The SQL editor, with schemas on the left and Dora above the query.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 ORCHESTRATE -->
+  <section class="stop paper" id="orchestrate" aria-labelledby="orch-title">
+    <div class="wrap">
+      <span class="num" aria-hidden="true">5</span>
+      <div class="body">
+        <p class="kicker">Orchestrate</p>
+        <h2 id="orch-title">Schedule the work with jobs, visual pipelines or Airflow</h2>
+        <p class="lede">Use whichever fits the team: notebook jobs for engineers, a drag-and-drop pipeline designer for everyone else, and Airflow if you already run it.</p>
+        <div class="caps">
+          <div class="cap">
+            <h3>Jobs</h3>
+            <p>Multi-task jobs where every task is a notebook. Dependencies, retries with a delay, timeouts, parameters, cron schedules in your time zone and per-job Spark settings. A run grid shows every task of the last ten runs, and Repair re-runs only what failed.</p>
+          </div>
+          <div class="cap">
+            <h3>Pipelines</h3>
+            <p>A visual designer with 12 activities: Copy data, Notebook, SQL script, Web, Lookup, Set variable, Append variable, Execute pipeline, Wait, Fail, If condition and ForEach. Branch on success, failure or completion; use dynamic expressions with 50+ functions; trigger on a schedule or a tumbling window with backfill; debug, monitor and re-run.</p>
+          </div>
+          <div class="cap">
+            <h3>Airflow</h3>
+            <p>Connect Airflow 2 or 3. Write DAG files in DataBridge and deploy them without kubectl, trigger and pause DAGs, clear failed tasks, read task logs, or open the full Airflow UI inside DataBridge.</p>
+          </div>
+          <div class="cap">
+            <h3>Compute and logs</h3>
+            <p>Send big Spark applications to Kubernetes through the Spark Operator. One logs centre follows the server, every notebook kernel, and every job and pipeline run, live.</p>
+          </div>
+        </div>
+        <div class="shots two">
+          <figure>
+            <div class="frame"><img src="assets/shots/job.webp" alt="Job page for a nightly refresh with four notebook tasks, a run grid and run history" width="1600" height="1000" loading="lazy"></div>
+            <figcaption>A four-task job: bronze, silver and gold notebooks, then data-quality checks, every night at 01:30.</figcaption>
+          </figure>
+          <figure>
+            <div class="frame"><img src="assets/shots/pipeline.webp" alt="Pipeline designer with a lookup, a notebook, a SQL script on success and a web call on failure, plus the activity palette and trigger settings" width="1600" height="1000" loading="lazy"></div>
+            <figcaption>The pipeline designer: green arrows run on success, red on failure.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6 ANALYSE -->
+  <section class="stop" id="analyse" aria-labelledby="analyse-title">
+    <div class="wrap">
+      <span class="num" aria-hidden="true">6</span>
+      <div class="body">
+        <p class="kicker">Analyse</p>
+        <h2 id="analyse-title">Dashboards built by AI and checked against the source before you see them</h2>
+        <p class="lede">Describe what the dashboard should help you decide and pick the data. DataBridge profiles the tables, draws the data model, finds the joins and runs reconciliation checks, then proposes KPIs, charts, filters and pages for you to review.</p>
+        <div class="shots">
+          <figure>
+            <div class="frame"><img src="assets/shots/ai-model.webp" alt="AI dashboard builder showing a data model diagram with an orders fact table joined to customers and products, detected relationships, business domain, and passing reconciliation checks" width="1600" height="1136" loading="lazy"></div>
+            <figcaption>Step two of the AI builder: the data model, detected joins, the business domain and reconciliation checks. Business context you add here is saved for next time.</figcaption>
+          </figure>
+        </div>
+        <div class="caps">
+          <div class="cap">
+            <h3>The AI dashboard builder</h3>
+            <ul>
+              <li>Detects the business domain — retail and sales, finance, HR, marketing, support, inventory, logistics, engineering or restaurants</li>
+              <li>Checks that keys are unique, no rows are orphaned and totals match the source tables</li>
+              <li>You untick anything you don’t want before it’s created</li>
+              <li>No AI key? A built-in designer builds it instead</li>
+            </ul>
+          </div>
+          <div class="cap">
+            <h3>What a dashboard can do</h3>
+            <ul>
+              <li>11 widget types: KPI, bar, horizontal bar, line, area, pie, funnel, table with heat map and totals, multi-chart panel, smart insights and text</li>
+              <li>7 KPI card styles, filters, pages and auto-refresh</li>
+              <li>Period presets with “compare with previous period”</li>
+              <li>Trend lines, forecasts and anomaly flags on time charts</li>
+              <li>Export to PDF; download any chart as CSV or PNG</li>
+            </ul>
+          </div>
+          <div class="cap">
+            <h3>Fast by default</h3>
+            <p>Dashboard queries run on DuckDB straight from the Delta files — usually in milliseconds — and fall back to Spark when a query needs it. SQL datasets accept <code>{{parameters}}</code> that are inserted as safe literals.</p>
+          </div>
+          <div class="cap">
+            <h3>Present with AI</h3>
+            <p>Turn a dashboard page into slides with a written story and narration, read aloud in natural voices (free Microsoft Edge voices, OpenAI or ElevenLabs). Auto-play it in a meeting or save it as a PDF.</p>
+          </div>
+        </div>
+        <div class="shots">
+          <figure>
+            <div class="frame"><img src="assets/shots/present.webp" alt="Presentation mode: a title slide summarising revenue growth and the biggest change, with voice, read aloud, auto-play and save-as-PDF controls" width="1600" height="1000" loading="lazy"></div>
+            <figcaption>Present mode turns the dashboard into slides with speaker notes. Shown here with the built-in narrator, which works without an AI service.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 OPERATE -->
+  <section class="stop paper" id="operate" aria-labelledby="operate-title">
+    <div class="wrap">
+      <span class="num" aria-hidden="true">7</span>
+      <div class="body">
+        <p class="kicker">Operate</p>
+        <h2 id="operate-title">Run it for a whole team: roles, approvals and an audit trail</h2>
+        <p class="lede">Sign-in is on from the start. Admins decide who gets in, what each role can see, and can trace every change afterwards.</p>
+        <div class="caps three">
+          <div class="cap"><h3>People</h3><p>Four roles — super admin, admin, editor and viewer. Self sign-up waits for an admin’s approval, with a spam trap and rate limit built in. Personal API tokens for scripts.</p></div>
+          <div class="cap"><h3>Control</h3><p>Turn 16 features on or off for everyone, per role or per user. A switched-off feature disappears from the menus and is blocked in the API too.</p></div>
+          <div class="cap"><h3>Visibility</h3><p>An audit log of every change, exportable to CSV. System health checks, a kernel manager that stops idle kernels, and settings you edit in the browser with validation.</p></div>
+        </div>
+        <div class="shots two">
+          <figure>
+            <div class="frame"><img src="assets/shots/admin-users.webp" alt="Users page with a sign-up waiting for approval and users with admin, editor and viewer roles" width="1600" height="1000" loading="lazy"></div>
+            <figcaption>Approving a new sign-up and managing roles.</figcaption>
+          </figure>
+          <figure>
+            <div class="frame"><img src="assets/shots/admin-features.webp" alt="Feature switches page with features grouped under Develop, Data and Orchestrate, each with settings for everyone, admin, editor and viewer" width="1600" height="1000" loading="lazy"></div>
+            <figcaption>Feature switches by role and user.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<section class="designs" id="designs" aria-labelledby="designs-title">
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <h2 id="designs-title">Five designs, light or dark — change it with one setting</h2>
+        <p class="lede" style="margin-top:16px">Choose the design everyone sees in Admin › Settings › Look &amp; feel. Light, dark or auto stays each person’s own choice. Fonts ship with the app, so it looks the same offline.</p>
+      </div>
+    </div>
+    <div class="picker" role="group" aria-label="Choose a design">
+      <button class="skin" type="button" data-skin="classic" aria-pressed="true"><span class="sw" style="background:linear-gradient(135deg,#0B1B3F 50%,#0A5CFF 50%)"></span>Classic</button>
+      <button class="skin" type="button" data-skin="saffron" aria-pressed="false"><span class="sw" style="background:linear-gradient(135deg,#F6EAD7 50%,#E8871E 50%)"></span>Saffron</button>
+      <button class="skin" type="button" data-skin="studio" aria-pressed="false"><span class="sw" style="background:linear-gradient(135deg,#FFFFFF 50%,#7C5CFC 50%)"></span>Studio</button>
+      <button class="skin" type="button" data-skin="midnight" aria-pressed="false"><span class="sw" style="background:linear-gradient(135deg,#0E1F1A 50%,#3DDC97 50%)"></span>Midnight</button>
+      <button class="skin" type="button" data-skin="ledger" aria-pressed="false"><span class="sw" style="background:linear-gradient(135deg,#F3F0E6 50%,#1F6B4A 50%)"></span>Ledger</button>
+      <div class="mode" role="group" aria-label="Light or dark">
+        <button type="button" data-mode="light" aria-pressed="true">Light</button>
+        <button type="button" data-mode="dark" aria-pressed="false">Dark</button>
+      </div>
+    </div>
+    <figure class="viewer">
+      <div class="frame"><img id="skin-img" src="assets/shots/skin-classic-light.webp" alt="DataBridge in the Classic design, light mode" width="1440" height="900" loading="lazy"></div>
+      <figcaption id="skin-cap" aria-live="polite"><b>Classic.</b> Navy sidebar and blue accents — the original look.</figcaption>
+    </figure>
+
+    <div class="looks">
+      <div>
+        <h3 style="font-size:clamp(24px,2.4vw,30px);font-stretch:90%">And 26 themes for dashboards</h3>
+        <p class="muted" style="margin-top:12px">Four families — classic, glass and soft UI, dark and bold, light and creative — plus a colour customiser for corners, glass and fonts. Presentations follow the dashboard’s theme.</p>
+      </div>
+      <div class="strip">
+        <figure><img src="assets/shots/look-glass.webp" alt="Dashboard in the Glassmorphism theme" width="760" height="531" loading="lazy"><figcaption>Glassmorphism</figcaption></figure>
+        <figure><img src="assets/shots/look-executive.webp" alt="Dashboard in the Executive Gold theme" width="760" height="531" loading="lazy"><figcaption>Executive Gold</figcaption></figure>
+        <figure><img src="assets/shots/look-brutal.webp" alt="Dashboard in the Neo-brutalism theme" width="760" height="531" loading="lazy"><figcaption>Neo-brutalism</figcaption></figure>
+        <figure><img src="assets/shots/look-aurora.webp" alt="Dashboard in the Aurora theme" width="760" height="531" loading="lazy"><figcaption>Aurora</figcaption></figure>
+        <figure><img src="assets/shots/look-liquid-light.webp" alt="Dashboard in the Liquid Glass Light theme" width="760" height="531" loading="lazy"><figcaption>Liquid Glass Light</figcaption></figure>
+        <figure><img src="assets/shots/look-cyberpunk.webp" alt="Dashboard in the Cyberpunk Neon theme" width="760" height="531" loading="lazy"><figcaption>Cyberpunk Neon</figcaption></figure>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="built" id="built" aria-labelledby="built-title">
+  <div class="wrap">
+    <h2 id="built-title">How it’s built: open engines, open formats</h2>
+    <p class="lede">DataBridge is a Python server and a web app around engines the data world already trusts. Nothing proprietary sits between you and your data.</p>
+    <div class="stack">
+      <div class="layer" style="--n:1">
+        <h3>In your browser</h3>
+        <div class="row"><div class="blk"><b>One web app</b><span>Workspace, catalog, Data Hub, workflows, dashboards and admin. Nothing to install on laptops.</span></div></div>
+      </div>
+      <div class="layer server" style="--n:4">
+        <h3>DataBridge server</h3>
+        <div class="row">
+          <div class="blk"><b>FastAPI on Python</b><span>Sign-in, roles, feature switches, audit log</span></div>
+          <div class="blk"><b>Scheduler</b><span>Syncs, jobs, pipelines, triggers and retries</span></div>
+          <div class="blk"><b>Connector runtime</b><span>Runs open-protocol connectors: YAML, Python or Docker</span></div>
+          <div class="blk"><b>Settings</b><span>Edited in the browser, or from files for Docker secrets</span></div>
+        </div>
+      </div>
+      <div class="layer" style="--n:4">
+        <h3>Engines</h3>
+        <div class="row">
+          <div class="blk"><b>Apache Spark 3.5</b><span>In Jupyter kernels: one per notebook, plus SQL and jobs</span></div>
+          <div class="blk"><b>DuckDB + delta-rs</b><span>Millisecond dashboard queries on the same Delta files</span></div>
+          <div class="blk"><b>Kubernetes, optional</b><span>Spark Operator for jobs that outgrow one machine</span></div>
+          <div class="blk"><b>Your choice of AI</b><span>Ollama locally, or any OpenAI-compatible API</span></div>
+        </div>
+      </div>
+      <div class="layer" style="--n:4">
+        <h3>Your storage</h3>
+        <div class="row">
+          <div class="blk"><b>Delta Lake 3.1</b><span>Or plain Parquet. Tables are folders you own</span></div>
+          <div class="blk"><b>Hive metastore</b><span>Table definitions in your PostgreSQL</span></div>
+          <div class="blk"><b>Jupyter notebooks</b><span>.ipynb files, ready for Git</span></div>
+          <div class="blk"><b>Run history</b><span>Jobs and pipelines in SQLite, sync state on disk</span></div>
+        </div>
+      </div>
+    </div>
+    <p class="open">If you ever leave, your work leaves with you: tables are Delta Lake, notebooks are Jupyter, code lives in Git, and connectors follow the open Airbyte protocol — without needing an Airbyte server.</p>
+  </div>
+</section>
+
+<section class="why" id="why" aria-labelledby="why-title">
+  <div class="wrap">
+    <h2 id="why-title">What makes DataBridge different</h2>
+    <div class="reasons">
+      <div><h3>It runs where you want</h3><p>A laptop for a pilot, a server for production, a free Oracle Cloud VM in between. Nothing ties you to one cloud, and your data never has to leave your network.</p></div>
+      <div><h3>One app instead of five</h3><p>Ingestion, storage, notebooks, scheduling and dashboards share one catalog, one sign-in and one set of roles. No glue between separate tools, no second bill for each.</p></div>
+      <div><h3>Costs you can predict</h3><p>No meter per query, per row or per connector. You pay for the licence and the machine it runs on — a single PC is enough to start.</p></div>
+      <div><h3>Built for serving many customers</h3><p>Tenants and businesses are part of the sync engine, so agencies, franchises and SaaS teams can keep each customer’s rows apart in shared tables, or give each their own schema.</p></div>
+      <div><h3>AI that checks its work, and stays optional</h3><p>The dashboard builder reconciles totals against the source before showing a number. Everything still works without an AI key, and the assistant can run entirely on your own machine.</p></div>
+      <div><h3>Your brand, your language</h3><p>Pick one of five designs, set your own brand name on connector help texts, logs and errors, and write the business context the AI should use.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="deploy" id="deploy" aria-labelledby="deploy-title">
+  <div class="wrap">
+    <h2 id="deploy-title">Install it in minutes, wherever you like</h2>
+    <p class="lede" style="margin-top:16px">Runs on Windows and on Linux (x86 or ARM), directly or in Docker. Spark needs Java 17; System health tells you if anything is missing.</p>
+    <div class="ways">
+      <div class="way"><h3>A Windows PC</h3><p>Starts DataBridge on port 8800 with Spark ready. One command updates it later.</p><pre><span class="c"># start</span>
+.\run.bat
+<span class="c"># update</span>
+.\update.ps1</pre></div>
+      <div class="way"><h3>Docker</h3><p>DataBridge and its Hive metastore on PostgreSQL in containers, with an optional Cloudflare tunnel. Builds for ARM and x86.</p><pre>docker compose up -d</pre></div>
+      <div class="way"><h3>Oracle Cloud, free</h3><p>One script sets up DataBridge on an Always Free ARM virtual machine, so it stays on when your PC is off.</p><pre>./setup.sh</pre></div>
+      <div class="way"><h3>Your own domain</h3><p>A Cloudflare Tunnel publishes app.yourdomain.com over HTTPS without opening ports, and can run as a Windows service.</p><pre>.\named-tunnel.ps1 -Service</pre></div>
+    </div>
+  </div>
+</section>
+
+<section class="pricing" id="pricing" aria-labelledby="pricing-title">
+  <div class="wrap">
+    <h2 id="pricing-title">Start with a free pilot</h2>
+    <p class="lede" style="margin-top:16px">Try the whole product on your own data for 30 days. Then choose how you want to run it.</p>
+    <!-- Prices: edit the plans below -->
+    <div class="plans">
+      <div class="plan lead">
+        <h3>Pilot</h3>
+        <p class="price">Free <small>for 30 days</small></p>
+        <ul>
+          <li>Every feature, on our cloud or your machine</li>
+          <li>Your data or the sample data</li>
+          <li>A setup call to connect your first sources</li>
+        </ul>
+        <a class="btn btn-primary" href="https://app.databridge-analytics.in/#signup">Start the pilot</a>
+      </div>
+      <div class="plan">
+        <h3>Self-hosted</h3>
+        <p class="price">Annual licence</p>
+        <ul>
+          <li>Runs on your PC, servers or cloud account</li>
+          <li>The full connector library</li>
+          <li>Updates and email support</li>
+          <li>Brand name and design of your choice</li>
+        </ul>
+        <a class="btn btn-quiet" href="mailto:hello@databridge-analytics.in?subject=DataBridge%20self-hosted%20licence">Ask for a quote</a>
+      </div>
+      <div class="plan">
+        <h3>Hosted by us</h3>
+        <p class="price">Monthly</p>
+        <ul>
+          <li>We run and update DataBridge for you</li>
+          <li>Native, built-in and MIT-licensed connectors</li>
+          <li>Tenants for serving your own customers</li>
+          <li>Email support</li>
+        </ul>
+        <a class="btn btn-quiet" href="mailto:hello@databridge-analytics.in?subject=DataBridge%20hosted%20plan">Ask for a quote</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="faq" id="faq" aria-labelledby="faq-title">
+  <div class="wrap">
+    <h2 id="faq-title">Questions</h2>
+    <div class="qs">
+      <details><summary>Is DataBridge a copy of Databricks?</summary><p>No. It’s an independent product that works in a familiar way — notebooks with <code>%sql</code> and <code>dbutils</code>, Delta tables, multi-task jobs and Git folders — so people who know that workflow are productive on day one. It adds things of its own, like built-in connectors, tenants, the AI dashboard builder and presentations. DataBridge is not affiliated with Databricks.</p></details>
+      <details><summary>Do I need a Spark cluster?</summary><p>No. Spark runs in local mode on the same machine as DataBridge. When a job outgrows it, send it to Kubernetes through the Spark Operator.</p></details>
+      <details><summary>Where is my data stored?</summary><p>In Delta Lake or Parquet folders on the machine or storage you choose, with table definitions in your own Hive metastore. If you self-host, nothing is copied to us.</p></details>
+      <details><summary>Does the AI send my data anywhere?</summary><p>Only to the AI service you configure. The dashboard builder sends table profiles and small samples so it can design the dashboard. With Ollama the model runs on your own machine and nothing leaves it. AI is optional: the built-in designer and narrator work without it.</p></details>
+      <details><summary>Can I use all 582 connectors?</summary><p>On your own servers, yes. Most library connectors are under the Elastic License 2.0, which allows that but not reselling them as a hosted service, so our hosted plan includes the native, built-in and MIT-licensed connectors. Licence notices are kept with each connector.</p></details>
+      <details><summary>Can one installation serve many customers?</summary><p>Yes. Create a tenant for each customer and a business for each of their brands or branches. Rows are stamped with both, so customers can share tables safely, or each can get their own schema.</p></details>
+      <details><summary>What do I need to run it?</summary><p>Windows or Linux (x86 or ARM), Python and Java 17 — or just Docker. A single PC is enough for a pilot; move to a server or a cloud VM when you’re ready.</p></details>
+      <details><summary>Can it carry our brand?</summary><p>You can choose the design and set the brand name shown on connector screens, help texts, logs and errors. For a fully white-labelled build, talk to us.</p></details>
+    </div>
+  </div>
+</section>
+
+<section class="closing" aria-labelledby="closing-title">
+  <div class="wrap">
+    <h2 id="closing-title">See your own data in DataBridge this week</h2>
+    <p class="lede">Start a pilot, connect a database or a spreadsheet, and build your first dashboard. We’ll help with the setup.</p>
+    <div class="cta">
+      <a class="btn btn-light" href="https://app.databridge-analytics.in/#signup">Start a free 30-day pilot</a>
+      <a class="btn btn-ghost" href="mailto:hello@databridge-analytics.in?subject=DataBridge%20demo">Book a demo</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<dialog class="lb" id="lb" aria-label="Screenshot">
+  <button type="button" id="lb-close">Close</button>
+  <img id="lb-img" src="data:," alt="">
+  <p id="lb-cap"></p>
+</dialog>
+
+<footer>
+  <div class="wrap">
+    <a class="brand" href="#main"><img src="assets/logo-mark.png" alt="" width="30" height="30"><span style="font-size:20px">Data<b>Bridge</b></span></a>
+    <span class="grow"></span>
+    <a href="#route">Platform</a>
+    <a href="#pricing">Pricing</a>
+    <a href="https://app.databridge-analytics.in/">Sign in</a>
+    <a href="mailto:hello@databridge-analytics.in">hello@databridge-analytics.in</a>
+    <span>© 2026 DataBridge, Pune, India</span>
+  </div>
+  <div class="wrap legal">Screenshots show the product with made-up sample data. Apache Spark, Apache Airflow, Delta Lake, Databricks, Airbyte and the connector brands named on this page are trademarks of their respective owners; DataBridge is an independent product and is not affiliated with or endorsed by them.</div>
+</footer>
+
+<script>
+(() => {
+  const top = document.getElementById('top');
+  const onScroll = () => top.classList.toggle('scrolled', scrollY > 8);
+  addEventListener('scroll', onScroll, { passive: true }); onScroll();
+
+  /* rail: fill as you read through the seven stops, light up the current stop */
+  const stops = document.getElementById('stops');
+  const fill = stops.querySelector('.rail i');
+  const secs = [...stops.querySelectorAll('.stop')];
+  let ticking = false;
+  const paint = () => {
+    ticking = false;
+    const r = stops.getBoundingClientRect(), mid = innerHeight * 0.4;
+    const p = Math.max(0, Math.min(1, (mid - r.top) / r.height));
+    fill.style.height = (p * 100).toFixed(2) + '%';
+    for (const s of secs) { const b = s.getBoundingClientRect(); s.classList.toggle('on', b.top <= mid + 40); }
+  };
+  addEventListener('scroll', () => { if (!ticking) { ticking = true; requestAnimationFrame(paint); } }, { passive: true });
+  addEventListener('resize', paint); paint();
+
+  /* click a screenshot to see it full size */
+  const lb = document.getElementById('lb'), lbImg = document.getElementById('lb-img'), lbCap = document.getElementById('lb-cap');
+  document.querySelectorAll('.frame img').forEach((im) => {
+    im.classList.add('zoom'); im.tabIndex = 0; im.setAttribute('role', 'button');
+    const open = () => {
+      if (!lb.showModal) return;
+      lbImg.src = im.currentSrc || im.src; lbImg.alt = im.alt;
+      const fc = im.closest('figure') && im.closest('figure').querySelector('figcaption');
+      lbCap.textContent = fc ? fc.textContent : '';
+      lb.showModal();
+    };
+    im.addEventListener('click', open);
+    im.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+  });
+  document.getElementById('lb-close').addEventListener('click', () => lb.close());
+  lb.addEventListener('click', (e) => { if (e.target === lb) lb.close(); });
+
+  /* design picker */
+  const NOTES = {
+    classic: 'Navy sidebar and blue accents — the original look.',
+    saffron: 'Warm paper, a cream sidebar, saffron accents and serif headings.',
+    studio: 'A top navigation bar instead of a sidebar; violet, rounded and airy.',
+    midnight: 'Dark-first, deep green with mint accents and technical type.',
+    ledger: 'A narrow icon rail that leaves more room for data; paper and forest green.'
+  };
+  const NAMES = { classic: 'Classic', saffron: 'Saffron', studio: 'Studio', midnight: 'Midnight', ledger: 'Ledger' };
+  const img = document.getElementById('skin-img'), cap = document.getElementById('skin-cap');
+  const state = { skin: 'classic', mode: 'light' };
+  const show = () => {
+    const src = `assets/shots/skin-${state.skin}-${state.mode}.webp`;
+    if (img.getAttribute('src') === src) return;
+    const pre = new Image(); img.classList.add('fade');
+    pre.onload = pre.onerror = () => { img.src = src; img.alt = `DataBridge in the ${NAMES[state.skin]} design, ${state.mode} mode`; img.classList.remove('fade'); };
+    pre.src = src;
+    cap.innerHTML = `<b>${NAMES[state.skin]}, ${state.mode}.</b> ${NOTES[state.skin]}`;
+  };
+  document.querySelectorAll('[data-skin]').forEach((b) => b.addEventListener('click', () => {
+    state.skin = b.dataset.skin;
+    document.querySelectorAll('[data-skin]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    show();
+  }));
+  document.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => {
+    state.mode = b.dataset.mode;
+    document.querySelectorAll('[data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    show();
+  }));
+})();
+</script>
+</body>
+</html>

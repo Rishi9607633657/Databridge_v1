@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import agent, features, datahub, connectors, tts, admin, airflow, assistant, auth, background, catalog, compute, dag_studio, dash_ai, dash_story, dashboards, delta_ops, editor, git_ops, jobs, logs, pipelines, workspace
+from . import clusters, features, datahub, connectors, tenants, tts, admin, airflow, assistant, auth, background, catalog, compute, dag_studio, dash_ai, dash_story, dashboards, delta_ops, editor, git_ops, jobs, logs, markets, pipelines, workspace
 from .airbyte import airbyte
 from .kernels import SQL_KEY, SqlError, kernels, run_sql
 from .settings import settings
@@ -21,17 +21,23 @@ async def lifespan(_app):
     logs.setup()
     jobs.manager.startup()
     pipelines.engine.startup()
-    reaper = asyncio.create_task(admin.idle_reaper())
-    from .airbyte import auto_land_loop, preload
-    lander = asyncio.create_task(auto_land_loop())
-    asyncio.create_task(preload())                     # connector catalog ready before anyone opens it
-    asyncio.create_task(datahub.prewarm())
-    agent.mark_interrupted()
-    syncer = asyncio.create_task(connectors.scheduler_loop())   # scheduled syncs             # Spark starts in the background, not on the first click
+    from .airbyte import auto_land_loop
+    bg = []
+
+    async def background():
+        """Start background work only after the web server is listening, so nothing can delay start-up."""
+        await asyncio.sleep(2)
+        print(f"[DataBridge] ready: http://localhost:{settings.port}", flush=True)
+        bg.extend([asyncio.create_task(admin.idle_reaper()),
+                   asyncio.create_task(auto_land_loop()),                 # optional external Airbyte server only
+                   asyncio.create_task(datahub.prewarm()),                # Spark starts in the background, not on the first click
+                   asyncio.create_task(connectors.scheduler_loop()),
+                   asyncio.create_task(cluster_meter_loop())])                # cluster usage metering (cost / charge-back)     # scheduled / real-time / event syncs
+    starter = asyncio.create_task(background())
     yield
-    reaper.cancel()
-    lander.cancel()
-    syncer.cancel()
+    starter.cancel()
+    for t in bg:
+        t.cancel()
     await pipelines.engine.shutdown()
     await jobs.manager.shutdown()
     await kernels.shutdown_all()
@@ -46,7 +52,10 @@ NO_AUDIT = ("/api/auth/", "/api/editor/", "/api/sql/queries")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
     if not path.startswith("/api/"):
-        return await call_next(request)
+        resp = await call_next(request)
+        if path == "/" or path.startswith("/static/") and not path.startswith("/static/vendor/"):
+            resp.headers["Cache-Control"] = "no-cache"      # revalidate (ETag) so an update shows up without Ctrl+F5
+        return resp
     h = request.headers.get("authorization", "")
     bearer = h[7:].strip() if h.lower().startswith("bearer ") else None
     user = auth.resolve(request.cookies.get(auth.COOKIE), bearer)
@@ -78,7 +87,27 @@ def _set_cookie(resp, request, token):
 @app.get("/api/auth/me")
 def auth_me(request: Request):
     return {"auth_enabled": auth.AUTH_ENABLED, "needs_setup": auth.AUTH_ENABLED and auth.user_count() == 0,
+            "signup": {k: v for k, v in auth.signup_settings().items() if k != "role"}, "skin": _skin(),
             "user": _user(request) or auth.resolve(request.cookies.get(auth.COOKIE))}
+
+
+def _skin():
+    from .settings import env as _env
+    v = (_env("UI_SKIN", "classic") or "classic").strip().lower()
+    return v if v in ("classic", "saffron", "studio", "midnight", "ledger") else "classic"
+
+
+@app.post("/api/auth/signup")
+def auth_signup(request: Request, body: dict = Body(...)):
+    """Self sign-up from the sign-in page (Admin › Settings › Sign-up). Waits for admin approval unless that is turned off."""
+    ip = request.client.host if request.client else ""
+    r = auth.signup(body, ip)
+    if r["pending"] or not r["username"]:
+        return {"pending": True}
+    token, user = auth.login(r["username"], body.get("password"), ip, request.headers.get("user-agent", ""))
+    resp = JSONResponse({"user": user})
+    _set_cookie(resp, request, token)
+    return resp
 
 
 @app.post("/api/auth/setup")
@@ -418,11 +447,68 @@ def k_list():
     return kernels.list()
 
 
+async def cluster_meter_loop():
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await asyncio.to_thread(clusters.meter_tick, list(kernels.by_id.values()))
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _nb_cluster(path):
+    try:
+        nb = workspace.read_notebook(path)["content"]
+        return ((nb.get("metadata") or {}).get("databridge") or {}).get("cluster") or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 @app.post("/api/kernels")
-async def k_start(path: str = Body(..., embed=True)):
+async def k_start(request: Request, path: str = Body(..., embed=True), cluster_id: str | None = Body(None, embed=True)):
     workspace.resolve(path)
-    ks = await kernels.get_or_start(f"nb:{path}", path, {"DATABRIDGE_NOTEBOOK_PATH": path})
-    return ks.info()
+    cid = cluster_id if cluster_id is not None else (_nb_cluster(path) or clusters.default_id())
+    extra = {"DATABRIDGE_NOTEBOOK_PATH": path}
+    if cid and cid != "local-default":
+        extra.update(clusters.kernel_env(cid, f"nb-{Path(path).stem}", (getattr(request.state, "user", None) or {}).get("username", "")))
+    key = f"nb:{path}"
+    old = kernels.get(kernels.by_key.get(key, ""))
+    if old and (old.extra_env or {}).get("DATABRIDGE_CLUSTER_ID") != extra.get("DATABRIDGE_CLUSTER_ID"):
+        await kernels.shutdown(old.id)                       # cluster changed: start a fresh kernel on the new cluster
+    ks = await kernels.get_or_start(key, path, extra)
+    return {**ks.info(), "cluster_id": (ks.extra_env or {}).get("DATABRIDGE_CLUSTER_ID")}
+
+
+@app.get("/api/clusters")
+def cl_list():
+    return {"clusters": clusters.list_clusters(), "live": clusters.live_status(list(kernels.by_id.values())), **clusters.catalog()}
+
+
+@app.post("/api/clusters")
+def cl_create(request: Request, body: dict = Body(...)):
+    u = _user(request)
+    c = clusters.save(body, None, u.get("username", ""))
+    auth.audit(u.get("username", ""), "cluster.create", c["name"])
+    return c
+
+
+@app.put("/api/clusters/{cid}")
+def cl_update(request: Request, cid: str, body: dict = Body(...)):
+    c = clusters.save(body, cid)
+    auth.audit(_user(request).get("username", ""), "cluster.update", c["name"])
+    return c
+
+
+@app.delete("/api/clusters/{cid}")
+def cl_delete(request: Request, cid: str):
+    clusters.delete(cid)
+    auth.audit(_user(request).get("username", ""), "cluster.delete", cid)
+    return {"ok": True}
+
+
+@app.get("/api/clusters-usage")
+def cl_usage(month: str | None = None):
+    return clusters.usage(month)
 
 
 def _kernel(kid):
@@ -1011,14 +1097,14 @@ async def dh_transform_preview(cid: str, body: dict = Body(...)):
     return await connectors.transform_preview(cid, body)
 
 
-# ---------- Data Hub: Airbyte connectors run by DataBridge (no Airbyte server) ----------
-@app.get("/api/datahub/airbyte/status")
+# ---------- Data Hub: connector library (open-source connector definitions run by DataBridge) ----------
+@app.get("/api/datahub/library/status")
 async def abl_status():
     from . import airbyte_local
     return airbyte_local.status()
 
 
-@app.post("/api/datahub/airbyte/build")
+@app.post("/api/datahub/library/build")
 async def abl_build():
     """Clone / update the connector definitions from github.com/airbytehq/airbyte and index them (background)."""
     from . import airbyte_local
@@ -1029,23 +1115,32 @@ async def abl_build():
     return {"ok": True}
 
 
-@app.get("/api/datahub/airbyte/catalog")
+@app.get("/api/datahub/library/catalog")
 async def abl_catalog():
     from . import airbyte_local
     cat = airbyte_local.catalog()
-    return [{**c, "ready": airbyte_local.runtime_ready(c)} for c in cat]
+    hide = {"image", "pypi", "docs", "dir", "cdk", "path"}             # upstream package / image names stay on the server
+    return [{**{k: v for k, v in c.items() if k not in hide}, "ready": airbyte_local.runtime_ready(c)} for c in cat if airbyte_local.licensed(c)]
 
 
-@app.get("/api/datahub/airbyte/catalog/{cid}/spec")
+@app.get("/api/datahub/library/notices")
+async def abl_notices():
+    from . import airbyte_local
+    return airbyte_local.notices()
+
+
+@app.get("/api/datahub/library/catalog/{cid}/spec")
 async def abl_spec(cid: str):
     from . import airbyte_local
     try:
-        return await asyncio.to_thread(airbyte_local.spec, cid)
+        out = await asyncio.to_thread(airbyte_local.spec, cid)
+        out["connector"] = {k: v for k, v in out["connector"].items() if k not in ("image", "pypi", "docs", "dir", "cdk", "path")}
+        return out
     except airbyte_local.AirbyteError as e:
         raise HTTPException(400, str(e))
 
 
-@app.post("/api/datahub/airbyte/catalog/{cid}/install")
+@app.post("/api/datahub/library/catalog/{cid}/install")
 async def abl_install(cid: str):
     from . import airbyte_local
     airbyte_local.get(cid)
@@ -1054,7 +1149,7 @@ async def abl_install(cid: str):
     return {"ok": True, "job": f"install:{cid}"}
 
 
-@app.get("/api/datahub/airbyte/icons/{cid}")
+@app.get("/api/datahub/library/icons/{cid}")
 async def abl_icon(cid: str):
     from . import airbyte_local
     p = airbyte_local.icon_path(cid)
@@ -1099,6 +1194,41 @@ async def dh_sync_run(sid: str, request: Request):
     return connectors.start_run(sid, "manual", _who(request)[0])
 
 
+@app.post("/api/datahub/syncs/{sid}/reset")
+async def dh_sync_reset(sid: str, body: dict = Body(default={})):
+    """Forget the sync position (all tables or body.tables): the next run reloads history from the connector's start date."""
+    return connectors.reset_state(sid, body.get("tables"))
+
+
+# ---------- Data Hub: tenants & businesses (who synced rows belong to) ----------
+def _tenant_admin(request: Request):
+    if _who(request)[1] not in ("super_admin", "admin"):
+        raise HTTPException(403, "Only admins can change tenants")
+
+
+@app.get("/api/datahub/tenants")
+async def dh_tenants():
+    return {"tenants": tenants.list_tenants(), "columns": dict(zip(("tenant", "business"), tenants.columns()))}
+
+
+@app.post("/api/datahub/tenants")
+async def dh_tenant_new(request: Request, body: dict = Body(...)):
+    _tenant_admin(request)
+    return tenants.save_tenant(body, None, _who(request)[0])
+
+
+@app.put("/api/datahub/tenants/{tid}")
+async def dh_tenant_put(tid: str, request: Request, body: dict = Body(...)):
+    _tenant_admin(request)
+    return tenants.save_tenant(body, tid)
+
+
+@app.delete("/api/datahub/tenants/{tid}")
+async def dh_tenant_del(tid: str, request: Request):
+    _tenant_admin(request)
+    return tenants.delete_tenant(tid)
+
+
 @app.get("/api/datahub/syncs/{sid}/runs")
 async def dh_sync_runs(sid: str):
     return connectors.runs(sid)
@@ -1107,47 +1237,6 @@ async def dh_sync_runs(sid: str):
 @app.get("/api/datahub/runs/{rid}")
 async def dh_run(rid: str):
     return connectors.get_run(rid)
-
-
-# ---------- AI Agent ----------
-@app.get("/api/agent/status")
-async def agent_status():
-    return agent.status()
-
-
-@app.get("/api/agent/runs")
-async def agent_runs():
-    return agent.list_runs()
-
-
-@app.post("/api/agent/runs")
-async def agent_create(request: Request, body: dict = Body(...)):
-    return agent.create_run(body.get("task"), _who(request)[0])
-
-
-@app.get("/api/agent/runs/{rid}")
-async def agent_get(rid: str):
-    return agent.get_run(rid)
-
-
-@app.post("/api/agent/runs/{rid}/approve")
-async def agent_approve(rid: str, request: Request, body: dict = Body(...)):
-    return agent.approve(rid, bool(body.get("approve")), body.get("note"), _who(request)[0])
-
-
-@app.post("/api/agent/runs/{rid}/message")
-async def agent_message(rid: str, request: Request, body: dict = Body(...)):
-    return agent.follow_up(rid, body.get("text"), _who(request)[0])
-
-
-@app.post("/api/agent/runs/{rid}/stop")
-async def agent_stop(rid: str):
-    return agent.stop(rid)
-
-
-@app.delete("/api/agent/runs/{rid}")
-async def agent_delete(rid: str):
-    return agent.delete(rid)
 
 
 @app.get("/api/datahub/imports")
@@ -1396,6 +1485,24 @@ async def jb_delete(job_id: str):
 @app.post("/api/jobs/{job_id}/pause")
 async def jb_pause(job_id: str, paused: bool = Body(..., embed=True)):
     return jobs.manager.set_paused(job_id, paused)
+
+
+@app.get("/api/markets/status")
+def mk_status():
+    return markets.status()
+
+
+@app.post("/api/markets/install")
+def mk_install(request: Request, body: dict = Body(default={})):
+    u = _user(request)
+    out = markets.install(u.get("username", ""), bool(body.get("overwrite_dashboards")))
+    auth.audit(u.get("username", ""), "markets.install", "")
+    return out
+
+
+@app.post("/api/markets/run")
+async def mk_run(body: dict = Body(default={})):
+    return markets.run_now(body.get("job") or "nightly")
 
 
 @app.post("/api/jobs/{job_id}/run")

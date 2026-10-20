@@ -1,0 +1,330 @@
+version: 6.7.0
+type: DeclarativeSource
+
+check:
+  type: CheckStream
+  stream_names: [merchant]
+
+definitions:
+  requester:
+    type: HttpRequester
+    url_base: "{{ config.get('api_url') or config.get('base_url') or 'https://api.clover.com' }}"
+    http_method: GET
+    authenticator:
+      type: BearerAuthenticator
+      api_token: "{{ config['api_token'] }}"
+    error_handler:
+      type: DefaultErrorHandler
+      max_retries: 8
+      backoff_strategies:
+        - type: ExponentialBackoffStrategy
+          factor: 3
+
+  elements_selector:
+    type: RecordSelector
+    extractor:
+      type: DpathExtractor
+      field_path: [elements]
+
+  offset_paginator:
+    type: DefaultPaginator
+    pagination_strategy:
+      type: OffsetIncrement
+      page_size: 1000
+      inject_on_first_request: true
+    page_token_option:
+      type: RequestOption
+      inject_into: request_parameter
+      field_name: offset
+    page_size_option:
+      type: RequestOption
+      inject_into: request_parameter
+      field_name: limit
+
+  small_paginator:
+    $ref: "#/definitions/offset_paginator"
+    pagination_strategy:
+      type: OffsetIncrement
+      page_size: 100
+      inject_on_first_request: true
+
+  add_location:
+    type: AddFields
+    fields:
+      - path: [location_id]
+        value: "{{ config['merchant_id'] }}"
+
+  # Clover returns at most 90 days per time-filtered request: windows of up to 90 days, end exclusive (+1 s)
+  ms_cursor:
+    type: DatetimeBasedCursor
+    cursor_field: modifiedTime
+    cursor_datetime_formats: ["%ms"]
+    datetime_format: "%ms"
+    start_datetime:
+      type: MinMaxDatetime
+      datetime: "{{ config['start_date'] }}"
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+    end_datetime:
+      type: MinMaxDatetime
+      datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+    step: "P{{ [config.get('window_days', 30) | int, 90] | min }}D"
+    cursor_granularity: PT1S
+    lookback_window: "PT{{ config.get('lookback_minutes', 30) | int }}M"
+
+  catalog_stream:
+    type: DeclarativeStream
+    primary_key: [id]
+    retriever:
+      type: SimpleRetriever
+      requester:
+        $ref: "#/definitions/requester"
+      record_selector:
+        $ref: "#/definitions/elements_selector"
+      paginator:
+        $ref: "#/definitions/offset_paginator"
+    transformations:
+      - $ref: "#/definitions/add_location"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        additionalProperties: true
+        properties:
+          id: {type: [string, "null"]}
+          name: {type: [string, "null"]}
+          location_id: {type: [string, "null"]}
+
+streams:
+  - type: DeclarativeStream
+    name: orders
+    primary_key: [id]
+    retriever:
+      type: SimpleRetriever
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/v3/merchants/{{ config['merchant_id'] }}/orders?filter=modifiedTime>={{ stream_interval.start_time }}&filter=modifiedTime<{{ (stream_interval.end_time | int) + 1000 }}"
+        request_parameters:
+          expand: lineItems,payments,discounts,refunds,orderType,employee
+      record_selector:
+        $ref: "#/definitions/elements_selector"
+      paginator:
+        $ref: "#/definitions/small_paginator"
+    incremental_sync:
+      $ref: "#/definitions/ms_cursor"
+    transformations:
+      - $ref: "#/definitions/add_location"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        additionalProperties: true
+        properties:
+          id: {type: [string, "null"]}
+          location_id: {type: [string, "null"]}
+          createdTime: {type: [integer, "null"]}
+          modifiedTime: {type: [integer, "null"]}
+          clientCreatedTime: {type: [integer, "null"]}
+          total: {type: [integer, "null"]}
+          state: {type: [string, "null"]}
+          paymentState: {type: [string, "null"]}
+          lineItems: {type: [object, "null"]}
+          payments: {type: [object, "null"]}
+
+  - type: DeclarativeStream
+    name: payments
+    primary_key: [id]
+    retriever:
+      type: SimpleRetriever
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/v3/merchants/{{ config['merchant_id'] }}/payments?filter=createdTime>={{ stream_interval.start_time }}&filter=createdTime<{{ (stream_interval.end_time | int) + 1000 }}"
+        request_parameters:
+          expand: tender,cardTransaction,refunds,order
+      record_selector:
+        $ref: "#/definitions/elements_selector"
+      paginator:
+        $ref: "#/definitions/small_paginator"
+    incremental_sync:
+      $ref: "#/definitions/ms_cursor"
+      cursor_field: createdTime
+    transformations:
+      - $ref: "#/definitions/add_location"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        additionalProperties: true
+        properties:
+          id: {type: [string, "null"]}
+          location_id: {type: [string, "null"]}
+          createdTime: {type: [integer, "null"]}
+          amount: {type: [integer, "null"]}
+          tipAmount: {type: [integer, "null"]}
+          taxAmount: {type: [integer, "null"]}
+          result: {type: [string, "null"]}
+          tender: {type: [object, "null"]}
+          order: {type: [object, "null"]}
+
+  - type: DeclarativeStream
+    name: refunds
+    primary_key: [id]
+    retriever:
+      type: SimpleRetriever
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/v3/merchants/{{ config['merchant_id'] }}/refunds?filter=createdTime>={{ stream_interval.start_time }}&filter=createdTime<{{ (stream_interval.end_time | int) + 1000 }}"
+      record_selector:
+        $ref: "#/definitions/elements_selector"
+      paginator:
+        $ref: "#/definitions/small_paginator"
+    incremental_sync:
+      $ref: "#/definitions/ms_cursor"
+      cursor_field: createdTime
+    transformations:
+      - $ref: "#/definitions/add_location"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        additionalProperties: true
+        properties:
+          id: {type: [string, "null"]}
+          location_id: {type: [string, "null"]}
+          createdTime: {type: [integer, "null"]}
+          amount: {type: [integer, "null"]}
+          payment: {type: [object, "null"]}
+
+  - type: DeclarativeStream
+    name: merchant
+    primary_key: [id]
+    retriever:
+      type: SimpleRetriever
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/v3/merchants/{{ config['merchant_id'] }}"
+        request_parameters:
+          expand: address,owner
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+    transformations:
+      - $ref: "#/definitions/add_location"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        additionalProperties: true
+        properties:
+          id: {type: [string, "null"]}
+          name: {type: [string, "null"]}
+          location_id: {type: [string, "null"]}
+          address: {type: [object, "null"]}
+
+  - $ref: "#/definitions/catalog_stream"
+    name: items
+    retriever:
+      $ref: "#/definitions/catalog_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/v3/merchants/{{ config['merchant_id'] }}/items"
+        request_parameters:
+          expand: categories,tags
+  - $ref: "#/definitions/catalog_stream"
+    name: categories
+    retriever:
+      $ref: "#/definitions/catalog_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/v3/merchants/{{ config['merchant_id'] }}/categories"
+  - $ref: "#/definitions/catalog_stream"
+    name: employees
+    retriever:
+      $ref: "#/definitions/catalog_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/v3/merchants/{{ config['merchant_id'] }}/employees"
+  - $ref: "#/definitions/catalog_stream"
+    name: customers
+    retriever:
+      $ref: "#/definitions/catalog_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/v3/merchants/{{ config['merchant_id'] }}/customers"
+        request_parameters:
+          expand: emailAddresses,phoneNumbers
+  - $ref: "#/definitions/catalog_stream"
+    name: tenders
+    retriever:
+      $ref: "#/definitions/catalog_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/v3/merchants/{{ config['merchant_id'] }}/tenders"
+  - $ref: "#/definitions/catalog_stream"
+    name: order_types
+    retriever:
+      $ref: "#/definitions/catalog_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/v3/merchants/{{ config['merchant_id'] }}/order_types"
+  - $ref: "#/definitions/catalog_stream"
+    name: discounts
+    retriever:
+      $ref: "#/definitions/catalog_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/v3/merchants/{{ config['merchant_id'] }}/discounts"
+
+spec:
+  type: Spec
+  connection_specification:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    required: [merchant_id, api_token, start_date]
+    additionalProperties: true
+    properties:
+      merchant_id:
+        type: string
+        title: Merchant ID
+        description: The 13-character merchant ID (Clover dashboard › Account & Setup › Merchants). Every row gets it as location_id.
+        examples: ["ABCDEFGH12345"]
+        order: 0
+      api_token:
+        type: string
+        title: API token
+        description: A merchant API token (Account & Setup › API Tokens, read permissions) or an OAuth access token from your Clover app.
+        airbyte_secret: true
+        order: 1
+      start_date:
+        type: string
+        title: History from
+        description: First sync loads orders and payments since this date (UTC); later syncs only load what changed since the last run.
+        format: date-time
+        pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        examples: ["2025-01-01T00:00:00Z"]
+        order: 2
+      base_url:
+        type: string
+        title: Region
+        enum: ["https://api.clover.com", "https://api.eu.clover.com", "https://api.la.clover.com", "https://apisandbox.dev.clover.com"]
+        default: "https://api.clover.com"
+        description: North America, Europe, Latin America, or the developer sandbox.
+        order: 3
+      window_days:
+        type: integer
+        title: Days per request window
+        description: History is read in windows of this many days (Clover allows up to 90).
+        default: 30
+        minimum: 1
+        maximum: 90
+        order: 4
+      lookback_minutes:
+        type: integer
+        title: Look-back (minutes)
+        description: Each incremental run re-reads this many minutes before the last change seen. Upsert removes duplicates.
+        default: 30
+        minimum: 0
+        maximum: 1440
+        order: 5

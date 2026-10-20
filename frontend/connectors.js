@@ -1,4 +1,4 @@
-/* DataBridge Data Hub — native Connections & Syncs (no Airbyte needed). Loaded before app.js. */
+/* DataBridge Data Hub — native Connections & Syncs. Loaded before app.js. */
 'use strict';
 
 let CX_TYPES = null;
@@ -14,7 +14,7 @@ function cxLogo(type, size = 28, airbyteId = null) {
   img.addEventListener('error', () => img.replaceWith(letter));
   return img;
 }
-const cxSummary = (c) => { if (c.type === 'airbyte') return `Airbyte · ${(c.airbyte || {}).id || ''} · ${({ manifest: 'API runner', python: 'Python', docker: 'Docker' })[(c.airbyte || {}).runtime] || ''}`; const k = c.config || {}; return k.host ? `${k.user ? `${k.user}@` : ''}${k.host}${k.port ? `:${k.port}` : ''}${k.database ? `/${k.database}` : k.service_name ? `/${k.service_name}` : ''}${k.path && c.type === 'sftp' ? ` ${k.path}` : ''}` : (k.path || k.url || ''); };
+const cxSummary = (c) => { if (c.type === 'airbyte') { const a = c.airbyte || {}; const v = (c.config || {}).values || {}; const locs = (v.restaurant_guids || []).length; return a.support === 'builtin' ? `Built-in · ${a.name || ''}${locs ? ` · ${locs} location${locs === 1 ? '' : 's'}` : v.merchant_id ? ` · ${v.merchant_id}` : v.domain ? ` · ${v.domain}` : ''}` : `Connector library · ${a.name || ''}`; } const k = c.config || {}; return k.host ? `${k.user ? `${k.user}@` : ''}${k.host}${k.port ? `:${k.port}` : ''}${k.database ? `/${k.database}` : k.service_name ? `/${k.service_name}` : ''}${k.path && c.type === 'sftp' ? ` ${k.path}` : ''}` : (k.path || k.url || ''); };
 const CX_STATE = { succeeded: 'var(--ok)', failed: 'var(--fail)', partial: 'var(--retry)', running: 'var(--run)', queued: 'var(--wait)' };
 const cxState = (s) => el('span', { class: 'state' }, el('span', { class: 'dot', style: { background: CX_STATE[s] || 'var(--line-strong)' } }), s ? s[0].toUpperCase() + s.slice(1) : 'Never run');
 const cxSched = (s) => {
@@ -31,15 +31,31 @@ async function dhConnections(body) {
   try { await cxTypes(); conns = await api('/api/datahub/connections'); } catch (e) { body.replaceChildren(errBox(e)); return; }
   const reload = () => { body.replaceChildren(); dhConnections(body); };
   const head = el('div', { class: 'row dh-ab-head' },
-    el('div', { class: 'grow muted small' }, 'Built-in connectors run inside DataBridge: no Docker, no Airbyte. Data is streamed in chunks and written to Delta tables with Spark.'),
+    el('div', { class: 'grow muted small' }, 'Connectors run inside DataBridge — nothing else to install or host. Data is streamed in chunks and written to Delta tables with Spark.'),
     canEditDH() ? btn('New connection', () => cxEdit(null, reload), { cls: 'primary', ic: 'plus' }) : null);
   if (!conns.length) {
     body.replaceChildren(head, el('section', { class: 'panel', style: { padding: '18px' } }, el('h3', { style: { marginTop: 0 } }, 'Connect your first source'),
       cxGallery((t) => cxEdit({ type: t.type }, reload))));
     return;
   }
-  body.replaceChildren(head, el('div', { class: 'cx-cards' }, conns.map((c) => el('div', { class: 'cx-card' },
-    el('div', { class: 'ab-name' }, cxLogo(c.type, 34, c.airbyte && c.airbyte.id), el('div', {}, el('b', {}, c.name), el('div', { class: 'muted small' }, c.type === 'airbyte' ? `${(c.airbyte || {}).name} (Airbyte)` : cxType(c.type).label))),
+  const tens = [...new Map(conns.filter((c) => c.tenancy && !c.tenancy.missing).map((c) => [c.tenancy.tenant_id, c.tenancy.tenant])).entries()];
+  let only = sessionStorage.getItem('cx-tenant') || '';
+  if (only && only !== '-' && !tens.some(([k]) => k === only)) only = '';
+  const grid = el('div', { class: 'cx-cards' });
+  if (tens.length) {
+    const f = el('select', { class: 'field sm cx-tfilter', 'aria-label': 'Filter by tenant' }, el('option', { value: '' }, 'All tenants'),
+      tens.map(([k, n]) => el('option', { value: k, selected: k === only }, n)), el('option', { value: '-', selected: only === '-' }, 'No tenant'));
+    f.addEventListener('change', () => { only = f.value; try { sessionStorage.setItem('cx-tenant', only); } catch { /* ignore */ } drawCards(); });
+    head.insertBefore(f, head.lastChild);
+  }
+  function drawCards() {
+    grid.replaceChildren(...conns.filter((c) => !only || (only === '-' ? !c.tenancy : c.tenancy && c.tenancy.tenant_id === only)).map(card));
+  }
+  body.replaceChildren(head, grid);
+  drawCards();
+  function card(c) { return el('div', { class: 'cx-card' },
+    el('div', { class: 'ab-name' }, cxLogo(c.type, 34, c.airbyte && c.airbyte.id), el('div', {}, el('b', {}, c.name), el('div', { class: 'muted small' }, c.type === 'airbyte' ? (c.airbyte || {}).name : cxType(c.type).label))),
+    tnBadge(c.tenancy, { empty: tens.length > 0 }),
     el('div', { class: 'muted small mono cx-sum', title: cxSummary(c) }, cxSummary(c) || '—'),
     el('div', { class: 'cx-res' }),
     el('div', { class: 'row', style: { gap: '6px', flexWrap: 'wrap' } },
@@ -55,7 +71,8 @@ async function dhConnections(body) {
       canEditDH() ? btn('', async () => {
         if (!(await confirmDialog(`Delete ${c.name}?`, 'Synced tables in the Catalog are kept.'))) return;
         try { await api(`/api/datahub/connections/${c.id}`, { method: 'DELETE' }); toast('Connection deleted'); reload(); } catch (e) { toast(e.message, 'err'); }
-      }, { cls: 'sm', ic: 'trash', title: 'Delete' }) : null)))));
+      }, { cls: 'sm', ic: 'trash', title: 'Delete' }) : null));
+  }
 }
 
 function cxGallery(pick) {
@@ -63,8 +80,8 @@ function cxGallery(pick) {
   const groups = [...new Set(types.map((t) => t.group))];
   return el('div', { class: 'cx-gallery' },
     typeof axGalleryInline === 'function' ? el('button', { type: 'button', class: 'cx-ab-card', onClick: () => pick({ type: 'airbyte' }) },
-      el('span', { class: 'cx-ab-ic' }, icon('hub', 22)), el('span', { class: 'grow' }, el('b', {}, '600+ more: Airbyte connectors'),
-        el('span', { class: 'muted small' }, 'Stripe, Shopify, HubSpot, Salesforce, Zendesk, Jira, Razorpay, Google Ads… run by DataBridge — no Airbyte server')), el('span', { class: 'ab-card-name' }, 'Browse ›')) : null,
+      el('span', { class: 'cx-ab-ic' }, icon('hub', 22)), el('span', { class: 'grow' }, el('b', {}, '580+ more apps & sources'),
+        el('span', { class: 'muted small' }, 'Stripe, Shopify, HubSpot, Salesforce, Zendesk, Jira, Razorpay, Google Ads… from the connector library')), el('span', { class: 'ab-card-name' }, 'Browse ›')) : null,
     groups.map((g) => el('div', {}, el('div', { class: 'cx-group' }, g),
     el('div', { class: 'ab-grid', style: { maxHeight: 'none' } }, types.filter((t) => t.group === g).map((t) =>
       el('button', { type: 'button', class: 'ab-card', onClick: () => pick(t) }, cxLogo(t.type, 34), el('span', { class: 'ab-card-name' }, t.label)))))));
@@ -86,7 +103,7 @@ async function cxEdit(c, done) {
     const showForm = (type) => {
       if (type === 'airbyte') {
         const back = () => { box.replaceChildren(headRow, body); title.textContent = 'New connection'; body.replaceChildren(cxGallery((t) => showForm(t.type))); };
-        title.textContent = 'Airbyte connectors';
+        title.textContent = 'Connector library';
         body.replaceChildren(axGalleryInline((cid) => axForm(box, cid, null, close, () => { box.replaceChildren(headRow, body); showForm('airbyte'); }, () => close(null))));
         body.prepend(el('div', { class: 'row', style: { marginBottom: '8px' } }, btn('Back', back, { cls: 'sm', ic: 'back' })));
         return;
@@ -105,6 +122,7 @@ async function cxEdit(c, done) {
           f.hint ? el('div', { class: 'ab-help' }, f.hint) : null);
       });
       const cfg = () => Object.fromEntries(Object.entries(inputs).map(([k, i]) => [k, i.value]));
+      const tp = tnPicker(c, false);
       const result = el('div');
       const testBtn = btn('Test connection', async () => {
         testBtn.disabled = true; result.replaceChildren(loading('Connecting…'));
@@ -115,11 +133,11 @@ async function cxEdit(c, done) {
       const save = el('button', { type: 'submit', class: 'btn primary' }, 'Save');
       const f = el('form', { method: 'dialog', class: 'ab-form', onSubmit: async (e) => {
         e.preventDefault(); save.disabled = true;
-        try { close(await api(c && c.id ? `/api/datahub/connections/${c.id}` : '/api/datahub/connections', { method: c && c.id ? 'PUT' : 'POST', body: { type, name: name.value.trim(), config: cfg() } })); }
+        try { close(await api(c && c.id ? `/api/datahub/connections/${c.id}` : '/api/datahub/connections', { method: c && c.id ? 'PUT' : 'POST', body: { type, name: name.value.trim(), config: cfg(), ...tp.get() } })); }
         catch (x) { result.replaceChildren(errBox(x)); save.disabled = false; }
       } },
       T.kind === 'db' ? el('p', { class: 'muted small', style: { margin: 0 } }, 'DataBridge connects directly from this server. For an on-premises database, the server must reach it (same network or VPN). Use a read-only user.') : null,
-      el('label', { class: 'lbl' }, 'Name', name), el('div', { class: 'ab-fields' }, fields), result,
+      el('label', { class: 'lbl' }, 'Name', name), el('div', { class: 'ab-fields' }, fields), tp.node, result,
       el('div', { class: 'actions' }, !(c && c.id) ? btn('Back', () => { title.textContent = 'New connection'; body.replaceChildren(cxGallery((t) => showForm(t.type))); }, { ic: 'back' }) : null,
         el('span', { class: 'grow' }), testBtn, save));
       body.replaceChildren(f);
@@ -159,15 +177,20 @@ async function dhSyncs(body) {
       return;
     }
     list.replaceChildren(el('section', { class: 'panel' }, el('div', { class: 'dh-grid-wrap', style: { border: 0 } }, el('table', { class: 't' },
-      el('thead', {}, el('tr', {}, ['Sync', 'Tables → Catalog', 'Schedule', 'Last run', 'Rows', 'Enabled', ''].map((x) => el('th', { class: x === 'Rows' ? 'num' : '' }, x)))),
+      el('thead', {}, el('tr', {}, ['Sync', 'Tables → Catalog', 'Schedule', 'Last run', 'Latest data', 'Rows', 'Enabled', ''].map((x) => el('th', { class: x === 'Rows' ? 'num' : '' }, x)))),
       el('tbody', {}, syncs.map((s) => {
         const r = s.last_run;
+        // newest change each incremental table has synced (to the second); tooltip: per table, slowest location too
+        const pos = Object.entries(s.positions || {}).filter(([, v]) => v && v.cursor).sort((a, b) => ((a[1].latest || a[1].cursor) > (b[1].latest || b[1].cursor) ? -1 : 1));
         return el('tr', {},
-          el('td', {}, el('div', { class: 'ab-name' }, cxLogo(s.connection.type, 26, s.connection.connector), el('div', {}, el('b', {}, s.name), el('div', { class: 'muted small' }, s.connection.name || '(deleted connection)')))),
+          el('td', {}, el('div', { class: 'ab-name' }, cxLogo(s.connection.type, 26, s.connection.connector), el('div', {}, el('b', {}, s.name), el('div', { class: 'muted small' }, s.connection.name || '(deleted connection)'),
+            s.connection.tenancy ? tnBadge(s.connection.tenancy) : null))),
           el('td', {}, el('div', {}, `${s.streams.length} table${s.streams.length === 1 ? '' : 's'} → `, el('a', { href: `#/catalog?db=${encodeURIComponent(s.target_schema)}`, class: 'mono' }, s.target_schema)),
             el('div', { class: 'muted small' }, [...new Set(s.streams.map((x) => ({ full: 'Full refresh', append: 'Incremental', merge: 'Upsert' })[x.mode]))].join(' · '))),
           el('td', {}, cxSched(s), s.next_run ? el('div', { class: 'muted small' }, `next ${new Date(s.next_run * 1000).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}`) : null),
           el('td', {}, s.running ? cxState('running') : cxState(r && r.status), r ? el('div', { class: 'muted small' }, `${ago(r.started)}${r.seconds != null ? ` · ${r.seconds}s` : ''}`) : null),
+          el('td', { class: 'small cx-pos' }, pos.length ? el('span', { title: `Newest change synced per table (the next run continues from there):\n${pos.map(([t, v]) => `${t}: ${v.latest || v.cursor}${v.partitions > 1 ? ` (oldest location: ${v.cursor})` : ''}`).join('\n')}` },
+            pos[0][1].latest || pos[0][1].cursor, pos.length > 1 ? el('div', { class: 'muted' }, `${pos.length} incremental tables`) : null) : el('span', { class: 'muted' }, s.streams.some((x) => x.mode !== 'full') ? 'not started' : 'full refresh')),
           el('td', { class: 'num' }, r && r.rows != null ? Number(r.rows).toLocaleString() : '—'),
           el('td', {}, el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: s.enabled !== false, disabled: !canEditDH(), 'aria-label': `Enable ${s.name}`,
             onChange: async (e) => { try { await api(`/api/datahub/syncs/${s.id}/enabled`, { method: 'POST', body: { on: e.target.checked } }); reload(true); } catch (x) { toast(x.message, 'err'); } } }))),
@@ -177,6 +200,11 @@ async function dhSyncs(body) {
               try { const run = await api(`/api/datahub/syncs/${s.id}/run`, { method: 'POST' }); toast(`Started ${s.name}`); reload(true); cxRunDialog(run.id); } catch (x) { toast(x.message, 'err'); reload(true); }
             }, { cls: 'sm primary', ic: 'play', disabled: s.running }) : null,
             btn('', () => cxRuns(s), { cls: 'sm', ic: 'history', title: 'Run history' }),
+            canEditDH() && s.streams.some((x) => x.mode !== 'full') ? btn('', async () => {
+              if (!(await confirmDialog(`Re-sync history for ${s.name}?`, 'Forgets how far each table has synced. The next run reads everything again from the connector’s “History from” date — Upsert keeps rows unique; Incremental (append) tables may get duplicates.', 'Re-sync history'))) return;
+              try { await api(`/api/datahub/syncs/${s.id}/reset`, { method: 'POST', body: {} }); const run = await api(`/api/datahub/syncs/${s.id}/run`, { method: 'POST' }); toast('Re-syncing history'); reload(true); cxRunDialog(run.id); }
+              catch (x) { toast(x.message, 'err'); }
+            }, { cls: 'sm', ic: 'restart', title: 'Re-sync history (reload from the start date)', disabled: s.running }) : null,
             canEditDH() ? btn('', () => cxSyncEdit(s, reload), { cls: 'sm', ic: 'edit', title: 'Edit' }) : null,
             canEditDH() ? btn('', async () => {
               if (!(await confirmDialog(`Delete ${s.name}?`, 'Stops the schedule. Tables already in the Catalog are kept.'))) return;
@@ -203,7 +231,7 @@ async function cxSyncEdit(s, done, connId) {
   if (!conns.length) { toast('Create a connection first (Connections tab)', 'err'); return; }
   const res = await openDialog((close) => {
     const S = { conn: (s && s.connection_id) || connId || conns[0].id, sel: new Map((s ? s.streams : []).map((x) => [x.source, { ...x }])), cols: {} };
-    const connSel = el('select', { class: 'field' }, conns.map((c) => el('option', { value: c.id, selected: c.id === S.conn }, `${c.name} (${cxType(c.type).label})`)));
+    const connSel = el('select', { class: 'field' }, conns.map((c) => el('option', { value: c.id, selected: c.id === S.conn }, `${c.name} (${c.type === 'airbyte' && c.airbyte ? c.airbyte.name : cxType(c.type).label})`)));
     const name = el('input', { class: 'field', value: (s && s.name) || '' , placeholder: 'e.g. Sales DB nightly' });
     const target = el('input', { class: 'field mono', value: (s && s.target_schema) || '' });
     const fmt = el('select', { class: 'field' }, [['delta', 'Delta (recommended)'], ['parquet', 'Parquet']].map(([v, l]) => el('option', { value: v, selected: ((s && s.format) || 'delta') === v }, l)));
@@ -225,14 +253,23 @@ async function cxSyncEdit(s, done, connId) {
     const err = el('div');
     const conn = () => conns.find((c) => c.id === S.conn);
     const slug = (x) => x.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '').replace(/^(\d)/, 't_$1') || 'data';
-    const defaultTarget = () => slug(`src_${conn().name}`);
+    const defaultTarget = () => (conn().tenancy && conn().type === 'airbyte' && conn().airbyte ? slug(`src_${conn().airbyte.id}`) : slug(`src_${conn().name}`));
+    const tenantNote = el('div', { class: 'cx-tenant-note' });
+    const drawTenantNote = () => {
+      const t = conn().tenancy;
+      tenantNote.hidden = !t;
+      if (!t) return;
+      tenantNote.replaceChildren(tnBadge(t), el('span', {}, ` Rows get tenant and business columns. Several tenants can share these tables: Upsert matches on tenant + business + key, Full refresh replaces only this tenant’s rows. Use `,
+        el('code', {}, '{tenant}'), ' in the schema (e.g. ', el('code', {}, 'bronze_{tenant}'), ') for one schema per tenant instead.'));
+    };
+    drawTenantNote();
     if (!target.value) target.value = defaultTarget();
     if (!name.value) name.value = conn().name;
     connSel.addEventListener('change', () => {
       const oldDefault = defaultTarget();
       S.conn = connSel.value; S.sel.clear(); S.cols = {};
       if (!target.value || target.value === oldDefault) target.value = defaultTarget();
-      name.value = conn().name; loadStreams();
+      name.value = conn().name; drawTenantNote(); loadStreams();
     });
     async function cols(stream) {
       if (!S.cols[stream]) S.cols[stream] = api(`/api/datahub/connections/${S.conn}/columns?stream=${encodeURIComponent(stream)}`).then((r) => r.columns).catch(() => []);
@@ -248,8 +285,11 @@ async function cxSyncEdit(s, done, connId) {
       const count = el('span', { class: 'muted small' });
       const upd = () => { count.textContent = `${S.sel.size} selected`; };
       const row = (st) => {
-        const on = S.sel.has(st.stream);
-        const cfg = S.sel.get(st.stream) || { source: st.stream, table: slug(st.name || st.stream), mode: 'full', cursor: null, keys: [], nested: R.kind === 'api' ? 'struct' : 'flat', transform: {} };
+        // new sync from a connector: its suggested streams are pre-selected; incremental ones default to history + upsert
+        const pre = !s && !S.touched && R.kind === 'airbyte' && st.suggested;
+        const on = S.sel.has(st.stream) || pre;
+        const cfg = S.sel.get(st.stream) || { source: st.stream, table: slug(st.name || st.stream), mode: R.kind === 'airbyte' && st.incremental && st.pk && st.pk.length ? 'merge' : 'full',
+          cursor: null, keys: R.kind === 'airbyte' && st.pk ? [...st.pk] : [], nested: R.kind === 'api' || R.kind === 'airbyte' ? 'struct' : 'flat', transform: {} };
         const trBtn = btn(cxTrSummary(cfg), () => cxTransformDialog(S.conn, R.kind, st.stream, cfg).then(() => { trBtn.lastChild.textContent = cxTrSummary(cfg); }),
           { cls: 'sm cx-tr-btn', ic: 'flow', title: 'Column mapping, types, calculated columns, filter, flatten nested data, de-duplicate', disabled: !on });
         const cb = el('input', { type: 'checkbox', checked: on, 'aria-label': `Sync ${st.stream}` });
@@ -267,14 +307,14 @@ async function cxSyncEdit(s, done, connId) {
             if (!cfg.cursor) cfg.cursor = st.cursor || null;
             const kk = el('input', { class: 'field sm', value: (cfg.keys || []).join(', '), placeholder: 'key column(s)' });
             kk.addEventListener('input', () => { cfg.keys = kk.value.split(',').map((x) => x.trim()).filter(Boolean); });
-            extra.append(el('span', { class: 'muted small' }, st.source_cursor ? `Incremental by ${st.cursor} (set by the connector) — only new/changed records each run.` : `Incremental cursor: ${cfg.cursor || '—'}`),
-              cfg.mode === 'merge' ? el('label', { class: 'lbl' }, 'Key column(s)', kk) : null);
+            extra.append(...[el('span', { class: 'muted small' }, st.source_cursor ? `Incremental by ${st.cursor} (set by the connector) — the first run loads history, later runs only new/changed records.` : `Incremental cursor: ${cfg.cursor || '—'}`),
+              cfg.mode === 'merge' ? el('label', { class: 'lbl' }, 'Key column(s)', kk) : null].filter(Boolean));
             return;
           }
           if (R.kind !== 'db') {
             const kk = el('input', { class: 'field sm', value: (cfg.keys || []).join(', '), placeholder: 'key column(s), e.g. id' });
             kk.addEventListener('input', () => { cfg.keys = kk.value.split(',').map((x) => x.trim()).filter(Boolean); });
-            extra.append(el('span', { class: 'muted small' }, 'APIs: each run reads what the endpoint returns.'), cfg.mode === 'merge' ? el('label', { class: 'lbl' }, 'Key column(s)', kk) : null);
+            extra.append(...[el('span', { class: 'muted small' }, 'APIs: each run reads what the endpoint returns.'), cfg.mode === 'merge' ? el('label', { class: 'lbl' }, 'Key column(s)', kk) : null].filter(Boolean));
             return;
           }
           extra.append(el('span', { class: 'muted small' }, 'loading columns…'));
@@ -288,10 +328,11 @@ async function cxSyncEdit(s, done, connId) {
           const keys = el('select', { class: 'field sm', multiple: true, size: Math.min(4, cs.length), title: 'Key column(s) to match rows for upsert' },
             cs.map((c) => el('option', { value: c.name, selected: (cfg.keys || []).includes(c.name) }, `${c.name}${c.pk ? ' 🔑' : ''}`)));
           keys.addEventListener('change', () => { cfg.keys = [...keys.selectedOptions].map((o) => o.value); });
-          extra.replaceChildren(el('label', { class: 'lbl' }, 'Cursor (new/changed rows)', cur), cfg.mode === 'merge' ? el('label', { class: 'lbl' }, 'Key column(s)', keys) : null);
+          extra.replaceChildren(...[el('label', { class: 'lbl' }, 'Cursor (new/changed rows)', cur), cfg.mode === 'merge' ? el('label', { class: 'lbl' }, 'Key column(s)', keys) : null].filter(Boolean));
         };
         mode.addEventListener('change', () => { cfg.mode = mode.value; drawExtra(); });
         cb.addEventListener('change', () => {
+          S.touched = true;
           if (cb.checked) S.sel.set(st.stream, cfg); else S.sel.delete(st.stream);
           tbl.disabled = mode.disabled = trBtn.disabled = !cb.checked; drawExtra(); upd();
         });
@@ -334,13 +375,14 @@ async function cxSyncEdit(s, done, connId) {
       el('div', { class: 'row' }, el('h2', { class: 'grow' }, s ? `Edit sync — ${s.name}` : 'New sync'), btn('Close', () => close(null), { cls: 'sm' })),
       el('div', { class: 'dh-form', style: { padding: 0 } },
         el('label', { class: 'lbl' }, 'From connection', connSel), el('label', { class: 'lbl' }, 'Into Catalog schema', target),
+        el('div', { style: { gridColumn: '1 / -1' } }, tenantNote),
         el('label', { class: 'lbl' }, 'Name', name), el('label', { class: 'lbl' }, 'Format', fmt),
         el('div', { class: 'lbl', style: { gridColumn: 'span 2' } }, el('span', {}, 'When to run'), schedSel, at, afterSel, schedHint)),
       s && s.hook ? el('div', { class: 'cx-hook' }, el('b', {}, 'Trigger URL '), el('span', { class: 'muted small' }, '(POST, no sign-in — keep it secret)'),
         el('code', { class: 'mono' }, `${location.origin}/api/datahub/hooks/${s.hook}`),
         btn('Copy', () => navigator.clipboard.writeText(`${location.origin}/api/datahub/hooks/${s.hook}`).then(() => toast('Copied')), { cls: 'sm ghost' })) : null,
       el('div', { class: 'cx-h' }, 'Tables to sync'), streamsBox, err,
-      el('div', { class: 'actions' }, el('span', { class: 'grow muted small' }, 'Incremental remembers the last cursor value; Upsert updates changed rows by key (Delta MERGE). Each table gets a _synced_at column.'), saveBtn, runBtn));
+      el('div', { class: 'actions' }, el('span', { class: 'grow muted small' }, 'Incremental remembers how far it got (to the second) and the first run loads history from the connector’s start date; Upsert updates changed rows by key (Delta MERGE). Each table gets a _synced_at column.'), saveBtn, runBtn));
   }, { wide: true });
   if (res) { toast(res.runId ? 'Sync saved — running now' : 'Sync saved'); done(); if (res.runId) cxRunDialog(res.runId); }
 }
@@ -371,7 +413,8 @@ function cxRunDialog(rid) {
           el('span', { class: 'grow' }, 'Data is in the Catalog. '),
           btn('Build a dashboard from it', () => { alive = false; clearTimeout(timer); close(null); location.hash = '#/dashboards'; setTimeout(() => dbAiDialog({ tables: r.streams.filter((x) => x.status === 'succeeded' && x.table && x.table.includes('.')).map((x) => x.table) }), 300); }, { cls: 'sm primary', ic: 'chart' })) : null,
         el('table', { class: 't' }, el('thead', {}, el('tr', {}, ['Table', 'Status', 'Rows', ''].map((x) => el('th', {}, x)))),
-          el('tbody', {}, r.streams.map((x) => el('tr', {}, el('td', { class: 'mono' }, x.table), el('td', {}, cxState(x.status === 'no new data' ? 'succeeded' : x.status), x.status === 'no new data' ? el('span', { class: 'muted small' }, ' no new data') : null),
+          el('tbody', {}, r.streams.map((x) => el('tr', {}, el('td', { class: 'mono' }, x.table), el('td', {}, cxState(x.status === 'no new data' ? 'succeeded' : x.status), x.status === 'no new data' ? el('span', { class: 'muted small' }, ' no new data') : null,
+              x.checkpoints ? el('span', { class: 'muted small', title: 'Written to the table in steps during a long read; a restart continues from the last one' }, ` · ${x.checkpoints} checkpoint${x.checkpoints === 1 ? '' : 's'}`) : null),
             el('td', { class: 'num' }, Number(x.rows || 0).toLocaleString()), el('td', { class: 'small', style: { color: 'var(--fail)', maxWidth: '420px' } }, x.error || ''))))),
         r.log && r.log.length ? el('details', { open: ['running', 'queued'].includes(r.status) }, el('summary', {}, 'Log'), el('pre', { class: 'log', style: { maxHeight: '220px' } }, r.log.join('\n'))) : null].filter(Boolean));
     };

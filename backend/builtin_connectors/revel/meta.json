@@ -1,0 +1,20 @@
+{
+  "name": "Revel Systems",
+  "version": "0.9.0",
+  "order": 3,
+  "stage": "beta",
+  "hosts": [
+    "revelup.com"
+  ],
+  "description": "Revel POS \u2014 orders, order items, payments, time sheets, products, categories, employees, customers and establishments.",
+  "suggested": [
+    "orders",
+    "order_items",
+    "payments",
+    "time_sheet_entries",
+    "products",
+    "establishments"
+  ],
+  "location": "Establishment",
+  "category": "Restaurant, retail & hospitality"
+}

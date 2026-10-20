@@ -138,7 +138,7 @@ async function viewWorkflows(main, r) {
   const action = tab === 'jobs' ? btn('Create job', () => (location.hash = '#/jobedit/new'), { cls: 'primary', ic: 'plus' })
     : tab === 'pipelines' && sub === 'pipelines' ? btn('New pipeline', () => plNewDialog(), { cls: 'primary', ic: 'plus' })
     : tab === 'pipelines' && sub === 'linked' ? btn('New linked service', () => plLinkedDialog(null, () => render()), { cls: 'primary', ic: 'plus' }) : null;
-  main.append(el('div', { class: 'page-head', style: { marginBottom: '4px' } }, el('h1', { class: 'grow' }, 'Workflows'), action), tabs, subTabs);
+  main.append(...[el('div', { class: 'page-head', style: { marginBottom: '4px' } }, el('h1', { class: 'grow' }, 'Workflows'), action), tabs, subTabs].filter(Boolean));
   const body = el('div');
   main.append(body);
   if (tab === 'airflow') return sub === 'studio' ? dagStudioTab(body) : sub === 'ui' ? airflowUiTab(body) : airflowTab(body);
@@ -315,6 +315,11 @@ async function viewJobEdit(main, r) {
     el('option', { value: 'local[2]' }, 'Local — 2 cores'), el('option', { value: '__custom' }, 'Custom master URL (Kubernetes, standalone, YARN)'));
   const masterIn = el('input', { class: 'field mono', placeholder: 'k8s://https://<aks-api-server>:443', value: presets.includes(cl.master) ? '' : cl.master || '' });
   masterSel.value = !cl.master || presets.includes(cl.master) ? cl.master || 'local[*]' : '__custom';
+  const namedSel = el('select', { class: 'field' }, el('option', { value: '' }, 'Custom settings (below)'));
+  api('/api/clusters').then((r) => { r.clusters.forEach((c) => namedSel.append(el('option', { value: c.id, selected: c.id === cl.cluster_id }, `${c.name} · ${c.cloud}`))); drawNamed(); }).catch(() => {});
+  const customBox = el('div');
+  const drawNamed = () => { customBox.hidden = !!namedSel.value; };
+  namedSel.addEventListener('change', drawNamed);
   const mem = (v) => { const s = el('select', { class: 'field' }, ['1g', '2g', '4g', '8g', '16g', '32g'].map((m) => el('option', { value: m, selected: m === v }, m))); return s; };
   const drvMem = mem(cl.driver_memory || '2g');
   const exMem = mem(cl.executor_memory || '2g');
@@ -334,10 +339,11 @@ async function viewJobEdit(main, r) {
   drawScale(); drawMaster();
   main.append(el('section', { class: 'panel form-panel', style: { marginTop: '24px' } }, el('h2', {}, 'Job cluster'),
     el('p', { class: 'muted', style: { margin: 0 } }, 'Each task gets a fresh Spark session with these settings, created from config/spark_init.py.'),
-    el('div', { class: 'grid2' }, f('Cluster', masterSel), customRow),
-    el('div', { class: 'grid3' }, f('Driver memory', drvMem), f('Executor memory', exMem), f('Cores per executor', exCores)),
-    el('label', { class: 'switch' }, autoscale, 'Enable autoscaling (dynamic allocation)'), scaleRow,
-    f('Spark config', sparkConf, 'key=value per line')));
+    f('Run on', namedSel, 'Pick a cluster from Compute › Clusters (AKS / EKS / OKE / this machine), or set custom Spark settings'),
+    setKids(customBox, el('div', { class: 'grid2' }, f('Cluster', masterSel), customRow),
+      el('div', { class: 'grid3' }, f('Driver memory', drvMem), f('Executor memory', exMem), f('Cores per executor', exCores)),
+      el('label', { class: 'switch' }, autoscale, 'Enable autoscaling (dynamic allocation)'), scaleRow,
+      f('Spark config', sparkConf, 'key=value per line')) || customBox));
 
   /* ---- schedule ---- */
   const schedOn = el('input', { type: 'checkbox', checked: !!job.schedule });
@@ -379,7 +385,7 @@ async function viewJobEdit(main, r) {
       name: nameIn.value.trim(), description: descIn.value.trim(),
       schedule: schedOn.checked ? cronIn.value.trim() : null, timezone: tzSel.value, paused: pausedIn.checked,
       max_concurrent: Number(maxConc.value) || 1, parameters: parseKv(jobParams.value),
-      cluster: {
+      cluster: namedSel.value ? { cluster_id: namedSel.value } : {
         master: masterSel.value === '__custom' ? masterIn.value.trim() : masterSel.value,
         driver_memory: drvMem.value, executor_memory: exMem.value, executor_cores: Number(exCores.value) || 1,
         autoscale: autoscale.checked, min_executors: Number(minEx.value) || 0, max_executors: Number(maxEx.value) || 1,

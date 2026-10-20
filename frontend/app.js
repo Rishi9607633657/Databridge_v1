@@ -24,6 +24,7 @@ function el(tag, attrs = {}, ...kids) {
 }
 
 const ICONS = {
+  trend: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
   home: '<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
   folder: '<path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   db: '<ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
@@ -41,6 +42,7 @@ const ICONS = {
   up: '<path d="M6 15l6-6 6 6"/>', down: '<path d="M6 9l6 6 6-6"/>',
   trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
   refresh: '<path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v4h-4"/>',
   back: '<path d="M15 6l-6 6 6 6"/>', caret: '<path d="M9 6l6 6-6 6"/>',
   log: '<path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"/>',
@@ -347,7 +349,7 @@ async function viewWorkspace(main, r) {
       other.length ? el('section', { class: 'panel' }, el('div', { class: 'panel-head' }, el('h3', {}, 'Other items')), table(other)) : null));
     return;
   }
-  panel.replaceChildren(data.items.length || path ? table(data.items) : null);
+  setKids(panel, data.items.length || path ? table(data.items) : null);
   if (!data.items.length) {
     panel.append(el('div', { class: 'empty' }, atReposRoot
       ? [el('h2', {}, 'No Git folders yet'), el('p', {}, 'Clone a GitHub, Azure DevOps, GitLab or Bitbucket repo to work on branches and commit from DataBridge.'),
@@ -446,6 +448,22 @@ async function viewNotebook(main, r) {
   const ktext = el('span', {}, 'Starting kernel…');
   const kbadge = el('span', { class: 'kbadge', role: 'status' }, kdot, ktext);
   const saveState = el('span', { class: 'muted', style: { fontSize: '12px' } }, 'Saved');
+  const clusterSel = el('select', { class: 'field nb-cluster', 'aria-label': 'Cluster', title: 'Cluster this notebook runs on (Compute › Clusters)' }, el('option', { value: 'local-default' }, 'This machine'));
+  api('/api/clusters').then((r) => {
+    for (const c of r.clusters) clusterSel.append(el('option', { value: c.id }, `${c.name} · ${c.cloud === 'local' ? 'local' : `${c.min_workers}–${c.max_workers} workers`}`));
+    clusterSel.value = (((nb.metadata || {}).databridge || {}).cluster) || r.default_cluster || 'local-default';
+    if (!clusterSel.value) clusterSel.value = 'local-default';
+  }).catch(() => { clusterSel.hidden = true; });
+  clusterSel.addEventListener('change', async () => {
+    nb.metadata = nb.metadata || {};
+    nb.metadata.databridge = { ...(nb.metadata.databridge || {}), cluster: clusterSel.value === 'local-default' ? null : clusterSel.value };
+    S.clusterChoice = clusterSel.value;
+    await save();
+    if (S.ws) { S.ws.onclose = null; S.ws.close(); }
+    S.kernel = null; resetRunning();
+    toast(`Starting a kernel on ${clusterSel.selectedOptions[0].textContent.split(' · ')[0]}…`);
+    connectKernel();
+  });
   const setK = (text, state, title) => { ktext.textContent = text; kdot.style.background = STATE_COLORS[state] || 'var(--wait)'; kbadge.title = title || ''; };
   const nbTitle = el('div', { class: 'nb-titlebox' },
     el('div', { class: 'nb-path' }, el('a', { href: '#/workspace' }, 'Workspace'),
@@ -462,7 +480,7 @@ async function viewNotebook(main, r) {
       btn('', () => interrupt(), { cls: 'ghost icon sm', ic: 'stop', title: 'Interrupt (stop the running cell)' }),
       btn('', () => restart(), { cls: 'ghost icon sm', ic: 'restart', title: 'Restart kernel' }),
       btn('', () => { S.cells.forEach((c) => { c.outputs = []; c.count = null; updateCount(c); renderOutputs(c); }); markDirty(); }, { cls: 'ghost icon sm', ic: 'eraser', title: 'Clear all outputs' })),
-    kbadge,
+    clusterSel, kbadge,
     btn('Schedule', () => (location.hash = `#/jobedit/new?notebook=${enc(path)}`), { cls: 'sm', ic: 'flow', title: 'Create a job that runs this notebook' }),
     dbFeat('ai_assistant') ? el('button', { type: 'button', class: 'btn sm dora-btn', title: 'Dora — AI assistant', onClick: () => side.show('dora') }, doraIcon(), 'Dora') : null,
     el('span', { class: 'nb-grp' },
@@ -762,7 +780,7 @@ async function viewNotebook(main, r) {
   /* ---- kernel ---- */
   async function connectKernel() {
     setK('Starting kernel…', 'starting');
-    try { S.kernel = await api('/api/kernels', { method: 'POST', body: { path } }); }
+    try { S.kernel = await api('/api/kernels', { method: 'POST', body: S.clusterChoice ? { path, cluster_id: S.clusterChoice } : { path } }); }
     catch (e) { setK('Kernel failed to start', 'error', e.message); toast(e.message, 'err'); return; }
     if (S.closed) return;
     const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/kernels/${S.kernel.id}`);
@@ -1323,9 +1341,13 @@ async function viewWorkflow(main, r) {
 /* ================= Compute ================= */
 async function viewCompute(main) {
   main.append(el('div', { class: 'page-head' }, el('h1', { class: 'grow' }, 'Compute')));
+  const cPanel = el('section', { class: 'panel', style: { marginBottom: '20px' } }, loading());
+  const uPanel = el('section', { class: 'panel', style: { marginBottom: '20px' } });
   const kPanel = el('section', { class: 'panel', style: { marginBottom: '20px' } });
   const sPanel = el('section', { class: 'panel' });
-  main.append(kPanel, sPanel);
+  main.append(cPanel, uPanel, kPanel, sPanel);
+  clustersPanel(cPanel, uPanel);
+  if (!(CURRENT_USER && ['admin', 'super_admin'].includes(CURRENT_USER.role))) uPanel.hidden = true;
 
   async function loadKernels() {
     let ks = [], st = { kernels: {}, java: { count: 0, orphans: [], memory_mb: 0 } };
@@ -1509,7 +1531,7 @@ let STATUS = {};
 let cleanup = null;
 const ROUTES = { home: viewHome, workspace: viewWorkspace, notebook: viewNotebook, catalog: viewCatalog,
   workflows: viewWorkflows, workflow: viewWorkflow, compute: viewCompute, sql: viewSql,
-  job: viewJob, jobedit: viewJobEdit, run: viewRun, pipelines: viewPipelines, pipeline: viewPipeline, prun: viewPipelineRun, admin: viewAdmin, dashboards: viewDashboards, dashboard: viewDashboard, logs: viewLogs, airflow: viewAirflow, datahub: viewDataHub, agent: viewAgent };
+  markets: viewMarkets, job: viewJob, jobedit: viewJobEdit, run: viewRun, pipelines: viewPipelines, pipeline: viewPipeline, prun: viewPipelineRun, admin: viewAdmin, dashboards: viewDashboards, dashboard: viewDashboard, logs: viewLogs, airflow: viewAirflow, datahub: viewDataHub };
 const NAV_FOR = { notebook: 'workspace', workflow: 'workflows', job: 'workflows', jobedit: 'workflows', run: 'workflows', pipeline: 'workflows', prun: 'workflows', pipelines: 'workflows', dashboard: 'dashboards', airflow: 'workflows' };
 
 function parseHash() {

@@ -1,0 +1,191 @@
+/* DataBridge designs ("skins"). html[data-skin=…] is set by theme.js from Admin › Settings › Look & feel.
+   Each skin sets its own colour tokens for light and dark (light/dark stays a per-user choice) plus its own shell:
+   classic  navy sidebar, blue (the original look)
+   saffron  warm paper, cream sidebar, saffron accent, serif headings
+   studio   top navigation bar instead of a sidebar, violet, rounded and airy
+   midnight dark-first, deep green and mint, technical type
+   ledger   narrow icon rail, paper and forest green, compact and sharp */
+
+/* ---------- sign-in / sign-up (all skins) ---------- */
+.auth-overlay{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,520px);align-items:stretch;justify-items:stretch;padding:0}
+.auth-side{display:flex;align-items:flex-end;padding:48px;color:#fff;background:radial-gradient(circle at 20% 15%,rgba(18,207,245,.35),transparent 45%),radial-gradient(circle at 80% 85%,rgba(10,92,255,.45),transparent 50%),linear-gradient(160deg,#0A1633,#060D20)}
+.auth-side-in{max-width:440px;display:flex;flex-direction:column;gap:10px}
+.auth-side-in b{font:700 34px/1.12 var(--disp);letter-spacing:-.8px}
+.auth-side-in span{font-size:15.5px;line-height:1.55;opacity:.85}
+.auth-overlay .auth-card{align-self:center;justify-self:center;margin:24px;box-shadow:none;border:1px solid var(--line);background:var(--surface);color:var(--text)}
+.auth-overlay{background:var(--ground)}
+.auth-two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.auth-alt{font-size:13px;color:var(--muted);text-align:center;margin-top:2px !important}
+.auth-alt a{color:var(--lagoon);font-weight:600}
+.auth-trap{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
+.auth-done{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;background:var(--lagoon-tint);color:var(--lagoon);font:700 22px var(--sans)}
+.au-pending{padding:12px 14px;margin-bottom:14px;border-color:color-mix(in srgb,var(--lagoon) 40%,var(--line))}
+.au-pending-h{display:flex;align-items:baseline;gap:10px;margin-bottom:6px}
+.au-pending-h h3{margin:0}
+@media (max-width:860px){.auth-overlay{grid-template-columns:1fr}.auth-side{display:none}.auth-two{grid-template-columns:1fr}}
+
+/* the full logo has dark lettering: show it white on dark backgrounds */
+html[data-theme=dark] .hero-logo,html[data-theme=dark] .auth-logo{filter:brightness(0) invert(1);opacity:.94}
+
+/* =====================================================================================================
+   SAFFRON — warm paper, cream sidebar, saffron accent, editorial serif headings
+   ===================================================================================================== */
+html[data-skin=saffron]{--disp:"Fraunces",Georgia,serif;--sans:"Manrope",system-ui,sans-serif;--r:10px;--r-lg:16px}
+html[data-skin=saffron]:not([data-theme=dark]){
+  --ground:#FBF7F1;--surface:#FFFFFF;--sunk:#FCF9F4;--line:#EADFD2;--line-soft:#F3EBE1;--line-strong:#DACBB8;
+  --text:#211A13;--text-2:#4A3F34;--muted:#7B6E60;
+  --lagoon:#D9480F;--lagoon-dark:#B93C0C;--lagoon-tint:#FDEBDD;--brand-grad:linear-gradient(90deg,#D9480F,#F59E0B);
+  --side:#F5EDE2;--side-2:#EDE1D1;--side-text:#5A4D40;--side-strong:#211A13;--chart-grid:#F1E8DC}
+html[data-skin=saffron][data-theme=dark]{
+  --ground:#15110D;--surface:#1D1712;--sunk:#18130F;--line:#382D23;--line-soft:#2A221B;--line-strong:#4A3C2F;
+  --text:#F4EDE5;--text-2:#DCCFC1;--muted:#B0A090;
+  --lagoon:#FB8A3C;--lagoon-dark:#FDA766;--lagoon-tint:#3A2314;--brand-grad:linear-gradient(90deg,#FB8A3C,#FBBF24);
+  --side:#100C09;--side-2:#221A13;--side-text:#C8B9A8;--side-strong:#FFF7EE;--chart-grid:#2A221B}
+html[data-skin=saffron] h1{font-weight:600;letter-spacing:-.6px;font-size:30px}
+html[data-skin=saffron] h2,html[data-skin=saffron] h3{letter-spacing:-.2px}
+html[data-skin=saffron] .sidebar{background:var(--side);border-right:1px solid var(--line)}
+html[data-skin=saffron] .brand-name{color:var(--side-strong);font-family:var(--disp);font-weight:700}
+html[data-skin=saffron] .new-btn{background:var(--side-strong);color:var(--side);border:0;border-radius:999px;justify-content:center}
+html[data-skin=saffron] .new-btn:hover{background:var(--lagoon);color:#fff}
+html[data-skin=saffron] .nav{color:var(--side-text);border-radius:999px;font-weight:500}
+html[data-skin=saffron] .nav:hover{background:var(--side-2);color:var(--side-strong)}
+html[data-skin=saffron] .nav.active{background:var(--surface);color:var(--lagoon);font-weight:700;box-shadow:0 1px 2px rgba(60,30,0,.08),0 0 0 1px var(--line)}
+html[data-skin=saffron] .theme-toggle{background:var(--side-2);border-color:var(--line)}
+html[data-skin=saffron] .theme-toggle button{color:var(--side-text)}
+html[data-skin=saffron] .theme-toggle button[aria-pressed=true]{background:var(--surface);color:var(--lagoon);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+html[data-skin=saffron] .user-chip{background:var(--side-2);color:var(--side-strong)}
+html[data-skin=saffron] .user-txt span{color:var(--muted)}
+html[data-skin=saffron] .user-av{background:linear-gradient(135deg,#D9480F,#F59E0B)}
+html[data-skin=saffron] .sidebar-foot{border-top-color:var(--line);color:var(--muted)}
+html[data-skin=saffron] .topbar{background:var(--ground);border-bottom-color:transparent}
+html[data-skin=saffron] .search{background:var(--surface);border:1px solid var(--line);border-radius:999px}
+html[data-skin=saffron] .btn{border-radius:999px}
+html[data-skin=saffron] .btn.primary{box-shadow:0 2px 10px color-mix(in srgb,var(--lagoon) 30%,transparent)}
+html[data-skin=saffron] .panel,html[data-skin=saffron] .ax-card2,html[data-skin=saffron] .cx-card,html[data-skin=saffron] .tn-card{box-shadow:0 1px 0 rgba(60,30,0,.03)}
+html[data-skin=saffron] .tabs button[aria-selected=true]{border-bottom-width:3px}
+html[data-skin=saffron] .auth-side{background:radial-gradient(circle at 25% 20%,rgba(251,191,36,.45),transparent 45%),radial-gradient(circle at 80% 90%,rgba(217,72,15,.55),transparent 55%),linear-gradient(160deg,#3B1F0E,#1A0F07)}
+
+/* =====================================================================================================
+   STUDIO — top navigation bar (no sidebar), violet accent, rounded and airy
+   ===================================================================================================== */
+html[data-skin=studio]{--disp:"Plus Jakarta Sans",system-ui,sans-serif;--sans:"Plus Jakarta Sans",system-ui,sans-serif;--r:10px;--r-lg:18px}
+html[data-skin=studio]:not([data-theme=dark]){
+  --ground:#F6F5FB;--surface:#FFFFFF;--sunk:#FAF9FE;--line:#E7E4F1;--line-soft:#F0EEF7;--line-strong:#D6D1E6;
+  --text:#18152B;--text-2:#3E3A58;--muted:#6C678A;
+  --lagoon:#6247FF;--lagoon-dark:#4E33EC;--lagoon-tint:#EEEAFF;--brand-grad:linear-gradient(90deg,#6247FF,#D946EF);
+  --bar:#FFFFFF;--bar-text:#4B4668;--chart-grid:#EFEDF6}
+html[data-skin=studio][data-theme=dark]{
+  --ground:#0E0D16;--surface:#16141F;--sunk:#12101A;--line:#2A2739;--line-soft:#201E2C;--line-strong:#3A3650;
+  --text:#ECEAF6;--text-2:#CFCBE3;--muted:#9C97B8;
+  --lagoon:#8B78FF;--lagoon-dark:#A99BFF;--lagoon-tint:#25204A;--brand-grad:linear-gradient(90deg,#8B78FF,#E879F9);
+  --bar:#16141F;--bar-text:#B9B4D2;--chart-grid:#211F2D}
+html[data-skin=studio] .app{flex-direction:column}
+html[data-skin=studio] .sidebar{width:100% !important;min-width:0;height:60px;flex-direction:row;align-items:center;gap:2px;padding:0 20px;
+  background:var(--bar);border-bottom:1px solid var(--line);overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+html[data-skin=studio] .sidebar::-webkit-scrollbar{display:none}
+html[data-skin=studio] .sidebar .resize-handle{display:none}
+html[data-skin=studio] .brand{padding:0 14px 0 0;flex:none}
+html[data-skin=studio] .brand img{width:30px;height:30px}
+html[data-skin=studio] .brand-name{color:var(--text);font-size:19px}
+html[data-skin=studio] .new-btn{order:20;flex:none;height:36px;margin:0 0 0 10px;border:0;border-radius:999px;background:var(--lagoon);color:#fff;padding:0 16px}
+html[data-skin=studio] .new-btn:hover{background:var(--lagoon-dark)}
+html[data-skin=studio] .nav{flex:none;height:36px;padding:0 12px;gap:7px;border-radius:999px;color:var(--bar-text);font-weight:600;font-size:13.5px;white-space:nowrap}
+html[data-skin=studio] .nav svg{display:none}                      /* text-only links keep the bar calm */
+html[data-skin=studio] .nav:hover{background:var(--line-soft);color:var(--text)}
+html[data-skin=studio] .nav.active{background:var(--lagoon-tint);color:var(--lagoon)}
+html[data-skin=studio] .sidebar>.grow{flex:1;min-width:8px}
+html[data-skin=studio] .sidebar-foot{display:none}
+html[data-skin=studio] .theme-toggle{order:21;flex:none;margin:0 0 0 10px;background:var(--line-soft);border-color:var(--line);border-radius:999px}
+html[data-skin=studio] .theme-toggle button{font-size:0;padding:5px 8px;border-radius:999px;color:var(--bar-text)}
+html[data-skin=studio] .theme-toggle button span{font-size:13px}
+html[data-skin=studio] .theme-toggle button[aria-pressed=true]{background:var(--surface);color:var(--lagoon);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+html[data-skin=studio] .user-chip{order:22;flex:none;width:auto;margin:0 0 0 8px;padding:3px;background:transparent;border-radius:999px}
+html[data-skin=studio] .user-txt{display:none}
+html[data-skin=studio] .user-av{background:var(--brand-grad)}
+html[data-skin=studio] .topbar{height:56px;background:transparent;border-bottom:0;padding:0 32px;justify-content:center}
+html[data-skin=studio] .search{max-width:680px;background:var(--surface);border:1px solid var(--line);border-radius:999px;height:40px;padding:0 16px;box-shadow:0 1px 2px rgba(24,21,43,.04)}
+html[data-skin=studio] main{padding-top:8px}
+html[data-skin=studio] .btn{border-radius:999px}
+html[data-skin=studio] .panel,html[data-skin=studio] .ax-card2,html[data-skin=studio] .cx-card,html[data-skin=studio] .tn-card{border-radius:18px;box-shadow:0 1px 2px rgba(24,21,43,.04),0 8px 24px rgba(24,21,43,.04)}
+html[data-skin=studio] .tabs{border-bottom:0;gap:6px;background:var(--line-soft);padding:4px;border-radius:999px;display:inline-flex;max-width:100%;overflow:auto}
+html[data-skin=studio] .tabs button{height:34px;border:0;border-radius:999px;font-weight:600}
+html[data-skin=studio] .tabs button[aria-selected=true]{background:var(--surface);color:var(--lagoon);box-shadow:0 1px 3px rgba(24,21,43,.1)}
+html[data-skin=studio] .auth-side{background:radial-gradient(circle at 20% 20%,rgba(217,70,239,.45),transparent 45%),radial-gradient(circle at 85% 85%,rgba(98,71,255,.6),transparent 55%),linear-gradient(160deg,#1B1240,#0B0820)}
+
+/* =====================================================================================================
+   MIDNIGHT — dark-first, deep green and mint, technical type
+   ===================================================================================================== */
+html[data-skin=midnight]{--disp:"Space Grotesk",system-ui,sans-serif;--sans:"Inter",system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,monospace;--r:8px;--r-lg:12px}
+html[data-skin=midnight]:not([data-theme=dark]){
+  --ground:#F2F6F5;--surface:#FFFFFF;--sunk:#F7FAF9;--line:#DCE6E3;--line-soft:#E9F0EE;--line-strong:#C8D6D2;
+  --text:#0E1F1C;--text-2:#2E4541;--muted:#5D7671;
+  --lagoon:#0E9F8E;--lagoon-dark:#0B8072;--lagoon-tint:#DDF5F1;--brand-grad:linear-gradient(90deg,#14B8A6,#22D3EE);
+  --ink:#0A1A17;--ink-2:#10251F;--ink-3:#16332C;--ink-line:#1F3F37;--ink-text:#A9C7C0;--chart-grid:#E6EEEC}
+html[data-skin=midnight][data-theme=dark]{
+  --ground:#060E0C;--surface:#0C1816;--sunk:#091311;--line:#1A2D29;--line-soft:#132320;--line-strong:#27423C;
+  --text:#E1F2EE;--text-2:#BED6D0;--muted:#86A69F;
+  --lagoon:#2DD4BF;--lagoon-dark:#5EEAD4;--lagoon-tint:#0E2E29;--brand-grad:linear-gradient(90deg,#2DD4BF,#67E8F9);
+  --ink:#040A09;--ink-2:#0A1513;--ink-3:#10221E;--ink-line:#183330;--ink-text:#93B5AE;--chart-grid:#132320}
+html[data-skin=midnight] h1{font-weight:700;letter-spacing:-.8px}
+html[data-skin=midnight] .sidebar{border-right:1px solid var(--ink-line)}
+html[data-skin=midnight] .brand-name{font-family:var(--disp);font-weight:700}
+html[data-skin=midnight] .new-btn{background:transparent;border:1px solid var(--lagoon);color:var(--lagoon)}
+html[data-skin=midnight] .new-btn:hover{background:var(--lagoon);color:#03201C}
+html[data-skin=midnight] .nav{font-weight:500;position:relative}
+html[data-skin=midnight] .nav.active{background:linear-gradient(90deg,color-mix(in srgb,var(--lagoon) 22%,transparent),transparent);color:#fff}
+html[data-skin=midnight] .nav.active::before{content:"";position:absolute;left:-12px;top:8px;bottom:8px;width:3px;border-radius:3px;background:var(--lagoon);box-shadow:0 0 12px var(--lagoon)}
+html[data-skin=midnight] .theme-toggle button[aria-pressed=true]{background:var(--lagoon);color:#03201C}
+html[data-skin=midnight] .user-av{background:var(--brand-grad);color:#03201C}
+html[data-skin=midnight][data-theme=dark] .topbar{background:color-mix(in srgb,var(--surface) 70%,transparent);backdrop-filter:blur(10px)}
+html[data-skin=midnight] .search{background:var(--sunk);border:1px solid var(--line)}
+html[data-skin=midnight] .btn.primary{color:#03201C;font-weight:700}
+html[data-skin=midnight][data-theme=dark] .btn.primary{box-shadow:0 0 0 1px var(--lagoon),0 0 18px color-mix(in srgb,var(--lagoon) 35%,transparent)}
+html[data-skin=midnight][data-theme=dark] .panel,html[data-skin=midnight][data-theme=dark] .ax-card2,html[data-skin=midnight][data-theme=dark] .cx-card,html[data-skin=midnight][data-theme=dark] .tn-card{
+  background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 96%,#2DD4BF),var(--surface));border-color:var(--line)}
+html[data-skin=midnight] .ax-kpis b,html[data-skin=midnight] .dh-stats b,html[data-skin=midnight] .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+html[data-skin=midnight] .tabs button[aria-selected=true]{color:var(--lagoon)}
+html[data-skin=midnight] .auth-side{background:radial-gradient(circle at 20% 20%,rgba(45,212,191,.35),transparent 45%),radial-gradient(circle at 85% 80%,rgba(103,232,249,.25),transparent 50%),linear-gradient(160deg,#06201B,#020807)}
+
+/* =====================================================================================================
+   LEDGER — narrow icon rail, paper and forest green, compact and sharp
+   ===================================================================================================== */
+html[data-skin=ledger]{--disp:"Archivo",system-ui,sans-serif;--r:6px;--r-lg:8px}
+html[data-skin=ledger]:not([data-theme=dark]){
+  --ground:#F6F5F0;--surface:#FFFFFF;--sunk:#FAF9F5;--line:#E2DFD5;--line-soft:#EDEBE4;--line-strong:#CFCBBE;
+  --text:#1B211D;--text-2:#3B443E;--muted:#69736C;
+  --lagoon:#1E7A4C;--lagoon-dark:#17603C;--lagoon-tint:#E2F1E8;--brand-grad:linear-gradient(90deg,#1E7A4C,#65A30D);
+  --rail:#1B211D;--rail-2:#262E29;--rail-text:#AEB9B1;--chart-grid:#ECEAE3}
+html[data-skin=ledger][data-theme=dark]{
+  --ground:#101311;--surface:#171B18;--sunk:#131714;--line:#2A312C;--line-soft:#202621;--line-strong:#39423C;
+  --text:#E6ECE7;--text-2:#C7D0C9;--muted:#8F9B92;
+  --lagoon:#4ABF84;--lagoon-dark:#6FD3A0;--lagoon-tint:#163223;--brand-grad:linear-gradient(90deg,#4ABF84,#A3E635);
+  --rail:#0B0D0C;--rail-2:#171B18;--rail-text:#95A29A;--chart-grid:#202621}
+html[data-skin=ledger] body{font-size:13.5px}
+html[data-skin=ledger] h1{font-weight:800;letter-spacing:-.6px;font-size:24px}
+html[data-skin=ledger] .sidebar{width:88px !important;min-width:88px;padding:12px 8px;gap:2px;background:var(--rail);align-items:stretch}
+html[data-skin=ledger] .sidebar .resize-handle{display:none}
+html[data-skin=ledger] .brand{justify-content:center;padding:2px 0 12px}
+html[data-skin=ledger] .brand-name{display:none}
+html[data-skin=ledger] .new-btn{justify-content:center;width:52px;height:40px;margin:0 auto 10px;padding:0;font-size:0;gap:0;border:0;border-radius:10px;background:var(--lagoon);color:#fff}
+html[data-skin=ledger] .new-btn svg{width:20px;height:20px}
+html[data-skin=ledger] .nav{flex-direction:column;justify-content:center;height:auto;min-height:54px;padding:7px 2px;gap:4px;font-size:10.5px;font-weight:600;
+  letter-spacing:.1px;text-align:center;line-height:1.15;color:var(--rail-text);border-radius:8px}
+html[data-skin=ledger] .nav svg{width:20px;height:20px}
+html[data-skin=ledger] .nav:hover{background:var(--rail-2);color:#fff}
+html[data-skin=ledger] .nav.active{background:var(--lagoon);color:#fff}
+html[data-skin=ledger] .sidebar-foot{display:none}
+html[data-skin=ledger] .theme-toggle{flex-direction:column;margin:6px 4px;padding:3px;background:var(--rail-2);border-color:transparent}
+html[data-skin=ledger] .theme-toggle button{font-size:0;padding:5px 0;color:var(--rail-text)}
+html[data-skin=ledger] .theme-toggle button span{font-size:13px}
+html[data-skin=ledger] .user-chip{justify-content:center;padding:6px 0;background:transparent}
+html[data-skin=ledger] .user-txt{display:none}
+html[data-skin=ledger] .user-av{background:var(--brand-grad)}
+html[data-skin=ledger] .topbar{height:50px;background:var(--surface);border-bottom:1px solid var(--line)}
+html[data-skin=ledger] .search{background:var(--sunk);border:1px solid var(--line);height:32px}
+html[data-skin=ledger] .btn{height:32px;font-weight:600}
+html[data-skin=ledger] .btn.sm{height:28px}
+html[data-skin=ledger] .panel,html[data-skin=ledger] .ax-card2,html[data-skin=ledger] .cx-card,html[data-skin=ledger] .tn-card{box-shadow:none}
+html[data-skin=ledger] .tabs button{font-weight:600;font-size:13px;text-transform:uppercase;letter-spacing:.06em}
+html[data-skin=ledger] .tabs button[aria-selected=true]{border-bottom-width:3px}
+html[data-skin=ledger] table.t th{text-transform:uppercase;font-size:11px;letter-spacing:.06em}
+html[data-skin=ledger] .auth-side{background:linear-gradient(135deg,rgba(255,255,255,.04) 25%,transparent 25%) 0 0/24px 24px,linear-gradient(160deg,#17311F,#0B1410)}

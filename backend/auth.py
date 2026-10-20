@@ -41,6 +41,11 @@ CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, time REA
 CREATE INDEX IF NOT EXISTS audit_time ON audit(time);
 CREATE TABLE IF NOT EXISTS login_fail (username TEXT PRIMARY KEY, count INTEGER, until REAL);
 """)
+for _col in ("company TEXT", "pending INTEGER DEFAULT 0"):          # sign-up (added later): company, waiting for approval
+    try:
+        store.db.execute(f"ALTER TABLE users ADD COLUMN {_col}")
+    except Exception:  # noqa: BLE001 - column exists
+        pass
 store.db.commit()
 
 
@@ -77,7 +82,10 @@ def _check_password(pw):
 
 # ------------------------------------------------------------------ users
 def _public(u):
-    return {k: u[k] for k in ("id", "username", "name", "email", "role", "active", "created", "last_login", "must_change")} if u else None
+    if not u:
+        return None
+    keys = u.keys() if hasattr(u, "keys") else u
+    return {k: u[k] for k in ("id", "username", "name", "email", "role", "active", "created", "last_login", "must_change", "company", "pending") if k in keys}
 
 
 def user_count():
@@ -108,6 +116,50 @@ def create_user(body, must_change=True, actor=None):
     return _public(store.one("SELECT * FROM users WHERE id=?", (uid,)))
 
 
+# ------------------------------------------------------------------ self sign-up
+_EMAIL = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[A-Za-z]{2,}$")
+_signup_hits = {}
+
+
+def signup_settings():
+    on = lambda k, d: (env(k, d) or d).lower() not in ("false", "0", "no", "off")  # noqa: E731
+    role = (env("SIGNUP_ROLE", "viewer") or "viewer").lower()
+    return {"enabled": AUTH_ENABLED and on("SIGNUP_ENABLED", "true"), "approval": on("SIGNUP_APPROVAL", "true"),
+            "role": role if role in ("viewer", "editor") else "viewer"}
+
+
+def signup(body, ip=""):
+    """Create an account from the sign-in page. With approval on (default) it waits until an admin approves it."""
+    st = signup_settings()
+    if not st["enabled"]:
+        raise HTTPException(403, "Sign-up is turned off on this DataBridge. Ask an admin for an account.")
+    if body.get("website"):                          # hidden field: only bots fill it in
+        return {"pending": True, "username": ""}
+    now = _now()
+    hits = [t for t in _signup_hits.get(ip, []) if now - t < 3600]
+    if len(hits) >= 5:
+        raise HTTPException(429, "Too many sign-ups from this network. Try again in an hour.")
+    _signup_hits[ip] = hits + [now]
+    email = (body.get("email") or "").strip().lower()
+    if not _EMAIL.match(email):
+        raise HTTPException(400, "Enter a valid work email")
+    name = (body.get("name") or "").strip()[:120]
+    if not name:
+        raise HTTPException(400, "Enter your name")
+    company = (body.get("company") or "").strip()[:120]
+    username = email
+    _check_password(body.get("password"))
+    if store.one("SELECT id FROM users WHERE username=? OR lower(email)=?", (username, email)):
+        raise HTTPException(409, "An account with this email already exists — sign in instead")
+    uid = uuid.uuid4().hex[:10]
+    store.x("INSERT INTO users (id, username, name, email, password_hash, role, active, created, must_change, company, pending) "
+            "VALUES (?,?,?,?,?,?,?,?,0,?,?)",
+            (uid, username, name, email, hash_password(body["password"]), st["role"], 0 if st["approval"] else 1, now, company,
+             1 if st["approval"] else 0))
+    audit(username, "signup", company or "", 200, ip)
+    return {"pending": st["approval"], "username": username}
+
+
 def update_user(uid, body, actor):
     u = store.one("SELECT * FROM users WHERE id=?", (uid,))
     if not u:
@@ -126,6 +178,8 @@ def update_user(uid, body, actor):
         raise HTTPException(403, "Only a super admin can change a super admin account")
     if "active" in body:
         fields["active"] = 1 if body["active"] else 0
+        if body["active"]:
+            fields["pending"] = 0                   # approving a sign-up
     if body.get("password"):
         _check_password(body["password"])
         fields["password_hash"] = hash_password(body["password"])
@@ -194,6 +248,8 @@ def login(username, password, ip="", agent=""):
     if lf and lf["until"] and lf["until"] > _now():
         raise HTTPException(429, f"Too many failed attempts. Try again in {int((lf['until'] - _now()) / 60) + 1} minute(s).")
     u = store.one("SELECT * FROM users WHERE username=?", (username,))
+    if u and u["pending"] and verify_password(password or "", u["password_hash"]):
+        raise HTTPException(403, "Your account is waiting for an admin to approve it. You can sign in once it is approved.")
     if not u or not u["active"] or not verify_password(password or "", u["password_hash"]):
         n = (lf["count"] if lf else 0) + 1
         store.x("INSERT INTO login_fail (username, count, until) VALUES (?,?,?) ON CONFLICT(username) DO UPDATE SET count=excluded.count, until=excluded.until",
@@ -262,9 +318,9 @@ def revoke_token(user, tid):
 
 
 # ------------------------------------------------------------------ authorisation policy
-PUBLIC = (re.compile(r"^/api/auth/(me|login|setup|logout)$"), re.compile(r"^/api/datahub/hooks/[A-Za-z0-9_-]{20,}$"))
-ADMIN_ONLY = re.compile(r"^/api/(admin/|users|audit)")
-ADMIN_WRITE = re.compile(r"^/api/linked-services")        # editors may read/use, only admins change connections
+PUBLIC = (re.compile(r"^/api/auth/(me|login|setup|signup|logout)$"), re.compile(r"^/api/datahub/hooks/[A-Za-z0-9_-]{20,}$"))
+ADMIN_ONLY = re.compile(r"^/api/(admin/|users|audit|markets/install|clusters-usage)")
+ADMIN_WRITE = re.compile(r"^/api/(linked-services|clusters)")        # editors may read/use, only admins change connections
 VIEWER_POST_OK = re.compile(r"^/api/(auth/(password|tokens)|dora/chat|linked-services/test$|dashboards/[^/]+/(query|options|story|reconcile|version)$|tts$)")
 
 

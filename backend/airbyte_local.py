@@ -23,12 +23,51 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from .settings import DATA_ROOT, env
+from .settings import DATA_ROOT, env as _env
+
+
+def env(key, default=None):
+    """Connector settings: neutral CONNECTORS_* names, older AIRBYTE_* names still honoured."""
+    alias = {"AIRBYTE_REPO_URL": "CONNECTORS_REPO_URL", "AIRBYTE_REPO_BRANCH": "CONNECTORS_REPO_BRANCH", "AIRBYTE_CDK_SPEC": "CONNECTORS_RUNNER_SPEC",
+             "AIRBYTE_PYTHON_VERSION": "CONNECTORS_PYTHON_VERSION", "AIRBYTE_PYTHON": "CONNECTORS_PYTHON"}.get(key)
+    return (_env(alias) if alias else None) or _env(key, default)
+
+
+def brand():
+    return _env("CONNECTORS_BRAND", "DataBridge") or "DataBridge"
+
+
+_UPSTREAM = re.compile(r"\bair\s?byte(?:'s)?\b", re.I)
+
+
+def scrub(text):
+    """Customer-facing text (spec descriptions, logs, errors) uses your brand, not the upstream project name."""
+    if not isinstance(text, str):
+        return text
+    t = re.sub(r"https?://docs\.airbyte\.(?:com|io)\S*", "the connector documentation", text)
+    t = re.sub(r"\bairbyte[-_](cdk|source|protocol)\S*", "connector runtime", t, flags=re.I)
+    return _UPSTREAM.sub(brand(), t)
+
+
+def _scrub_schema(x):
+    if isinstance(x, dict):
+        ren = {"airbyte_secret": "x_secret", "airbyte_hidden": "x_hidden"}
+        return {ren.get(k, k): (scrub(v) if k in ("title", "description", "pattern_descriptor") else _scrub_schema(v)) for k, v in x.items()}
+    if isinstance(x, list):
+        return [_scrub_schema(v) for v in x]
+    return x
+
+
+def allowed_licenses():
+    """CONNECTORS_LICENSES: which connector licences may be used (e.g. 'MIT' when you sell DataBridge as a hosted service)."""
+    v = _env("CONNECTORS_LICENSES", "MIT,ELv2") or "MIT,ELv2"
+    return {x.strip().lower() for x in v.split(",") if x.strip()}
 
 ROOT = DATA_ROOT / ".stratum" / "airbyte_local"
 REPO = ROOT / "repo"
 CONN_DIR = REPO / "airbyte-integrations" / "connectors"
 CATALOG = ROOT / "catalog.json"
+BUILTIN = Path(__file__).resolve().parent / "builtin_connectors"     # DataBridge's own connectors (Toast, Clover, R365…)
 ENVS = ROOT / "envs"
 MASK = "••••••••"
 SPARSE = ["/airbyte-integrations/connectors/source-*/metadata.yaml", "/airbyte-integrations/connectors/source-*/manifest.yaml",
@@ -119,9 +158,10 @@ def _pip(d: Path, *pkgs, upgrade=False):
 def status():
     cat = catalog(silent=True)
     cdk = (ENVS / "cdk" / ".ready").exists()
-    return {"built": bool(cat), "connectors": len(cat or []), "updated": CATALOG.stat().st_mtime if CATALOG.exists() else None,
+    return {"built": CATALOG.exists(), "connectors": len(cat or []), "builtins": len(_builtins()),
+            "updated": CATALOG.stat().st_mtime if CATALOG.exists() else None,
             "git": bool(shutil.which("git")), "docker": bool(shutil.which("docker")), "cdk_ready": cdk,
-            "repo": env("AIRBYTE_REPO_URL", "https://github.com/airbytehq/airbyte.git"), "jobs": _jobs,
+            "brand": brand(), "licenses": sorted(allowed_licenses()), "jobs": _jobs,
             "counts": {r: sum(1 for c in cat or [] if c["runtime"] == r) for r in ("manifest", "python", "docker")}}
 
 
@@ -132,27 +172,27 @@ def build_catalog():
     _jobs[job] = {"state": "running", "log": [], "started": time.time()}
     try:
         if not shutil.which("git"):
-            raise RuntimeError("Git is not installed. Install Git for Windows (https://git-scm.com/download/win) and try again.")
+            raise RuntimeError("Git is required to download the connector library. Install Git for Windows (https://git-scm.com/download/win) and try again.")
         url = env("AIRBYTE_REPO_URL", "https://github.com/airbytehq/airbyte.git")
         branch = env("AIRBYTE_REPO_BRANCH", "master")
         ROOT.mkdir(parents=True, exist_ok=True)
         if not (REPO / ".git").exists():
-            _log(job, f"Cloning {url} (connector definitions only)…")
+            _log(job, "Downloading the connector library (definitions only, ~50 MB)…")
             shutil.rmtree(REPO, ignore_errors=True)
             _run(["git", "clone", "--depth", "1", "--filter=blob:none", "--no-checkout", "--branch", branch, url, str(REPO)])
             _run(["git", "sparse-checkout", "init", "--no-cone"], cwd=REPO)
             (REPO / ".git" / "info" / "sparse-checkout").write_text("\n".join(SPARSE) + "\n", encoding="utf-8")
-            _log(job, "Downloading metadata, manifests and icons…")
+            _log(job, "Unpacking connector definitions and logos…")
             _run(["git", "checkout", branch], cwd=REPO)
         else:
-            _log(job, "Updating from GitHub…")
+            _log(job, "Updating the connector library…")
             (REPO / ".git" / "info" / "sparse-checkout").write_text("\n".join(SPARSE) + "\n", encoding="utf-8")
             _run(["git", "fetch", "--depth", "1", "origin", branch], cwd=REPO)
             _run(["git", "reset", "--hard", "FETCH_HEAD"], cwd=REPO)
         commit = _run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO).strip()
         out = []
         dirs = sorted(p for p in CONN_DIR.glob("source-*") if (p / "metadata.yaml").exists())
-        _log(job, f"Indexing {len(dirs)} source connectors (commit {commit})…")
+        _log(job, f"Indexing {len(dirs)} connectors (version {commit})…")
         for d in dirs:
             try:
                 md = (yaml.safe_load((d / "metadata.yaml").read_text(encoding="utf-8")) or {}).get("data") or {}
@@ -167,6 +207,8 @@ def build_catalog():
             runtime = ("manifest" if lang == "manifest-only" and has_manifest else
                        "python" if lang == "python" and pypi.get("enabled") else "docker")
             cid = d.name[len("source-"):]
+            if "airbyte" in cid:                       # connectors to the upstream project's own API
+                continue
             base = ((md.get("connectorBuildOptions") or {}).get("baseImage") or "")
             out.append({"id": cid, "name": md.get("name") or cid, "runtime": runtime, "dir": d.name,
                         "support": md.get("supportLevel") or "community", "stage": md.get("releaseStage") or "",
@@ -175,6 +217,7 @@ def build_catalog():
                         "pypi": pypi.get("packageName") if runtime == "python" else None,
                         "cdk": (re.search(r":(\d+\.\d+\.\d+)", base) or [None, None])[1],
                         "components": (d / "components.py").exists(), "icon": (d / "icon.svg").exists(),
+                        "license": (md.get("license") or "ELv2").replace("Elv2", "ELv2"),
                         "docs": md.get("documentationUrl"), "hosts": (md.get("allowedHosts") or {}).get("hosts") or [],
                         "suggested": (md.get("suggestedStreams") or {}).get("streams") or []})
         CATALOG.write_text(json.dumps({"commit": commit, "built": time.time(), "connectors": out}, indent=0), encoding="utf-8")
@@ -188,32 +231,120 @@ def build_catalog():
         _jobs[job]["error"] = str(e)[:1500]
 
 
-def catalog(silent=False):
+# categories for browsing (id prefixes); anything else falls back to the connector's subtype
+CATEGORIES = [
+    ("Restaurant, retail & hospitality", "square lightspeed-retail cloudbeds waiteraid 7shifts retailexpress track-pms deputy when-i-work shiftbase"),
+    ("E-commerce", "shopify woocommerce adobe-commerce commercetools prestashop squarespace shopwired sharetribe ebay amazon-seller-partner cart judge-me yotpo recharge printify sendowl akeneo klarna trustpilot webflow wordpress"),
+    ("Inventory & logistics", "cin7 linnworks katana inflowinventory veeqo picqer shipstation shippo easypost flexport freightview onfleet tplcentral ezofficeinventory fleetio zoho-inventory"),
+    ("Payments & billing", "stripe paypal braintree chargebee chargify chargedesk recurly paddle gocardless paystack dwolla plaid revolut nexiopay xsolla revenuecat orb getlago stigg pabbly invoiced invoiceninja zoho-billing zoho-invoice tremendous brex ramp qonto chartmogul churnkey younium"),
+    ("Finance & accounting", "quickbooks xero netsuite freshbooks e-conomic visma zoho-books zoho-expense pennylane fastbill kyriba railz free-agent workflowmax you-need-a-budget navan chift"),
+    ("CRM & sales", "salesforce hubspot pipedrive zoho-crm zoho-bigin close-com copper freshsales insightly agilecrm capsule-crm nutshell onepagecrm less-annoying-crm salesflare nocrm pipeliner apptivo spotlercrm jobnimbus outreach salesloft gong reply-io persistiq smartreach leadfeeder flowlu dolibarr planhat vitally merge"),
+    ("Marketing & ads", "google-ads facebook instagram linkedin tiktok snapchat pinterest twitter reddit bing-ads criteo taboola outbrain amazon-ads apple-search-ads spotify-ads openai-ads mntn mercado-ads awin commission-junction partnerize partnerstack referralhero uppromote google-search-console youtube metricool rd-station marketo pardot"),
+    ("Email & messaging", "mailchimp klaviyo sendgrid brevo sendinblue mailgun mailjet mailerlite mailersend campaign-monitor convertkit drip iterable customer-io braze omnisend emailoctopus elasticemail sparkpost postmark tinyemail bigmailer smaily flexmail encharge sendpulse lemlist twilio onesignal tyntec smsmode campayn mailosaur mailtrap mixmax"),
+    ("Analytics & product", "google-analytics amplitude mixpanel posthog segment pendo fullstory kissmetrics plausible piwik appsflyer adjust appfigures appfollow app-store-connect vwo statsig launchdarkly split-io configcat unleash chameleon appcues gainsight yandex-metrica looker metabase mode sigma-computing zoho-analytics google-pagespeed linkrunner"),
+    ("Support & ITSM", "zendesk freshdesk freshservice freshchat freshcaller intercom help-scout front gorgias dixa drift customerly solarwinds uservoice canny opsgenie pagerduty incident-io firehydrant rootly statuspage instatus ninjaone pylon missive zoho-desk getgist babelforce genesys zonka retently survicate"),
+    ("HR, payroll & recruiting", "bamboo-hr hibob greenhouse lever-hiring workable ashby teamtailor recruitee breezy-hr factorial payfit sage-hr keka greythr zenefits employment-hero hoorayhr perk thrive-learning workramp northpass"),
+    ("Projects & time tracking", "jira asana monday clickup trello linear notion confluence basecamp wrike teamwork smartsheets airtable coda miro todoist ticktick shortcut productboard aha rocketlane google-tasks microsoft-lists gridly clockify toggl harvest everhour my-hours timely clockodo tempo float productive primetric hubplanner ruddr glassfrog"),
+    ("Developer & IT", "github gitlab circleci buildkite harness codefresh sentry bugsnag rollbar datadog grafana pingdom vercel fastly sonar-cloud dockerhub pypi testrail jamf-pro auth0 okta microsoft-entra-id aws-cloudtrail cisco-meraki intruder secoda dbt n8n svix"),
+    ("Communication & documents", "slack microsoft-teams discord zoom gmail outlook google-calendar calendly cal-com savvycal ringcentral aircall justcall callrail google-directory dropbox-sign docuseal pandadoc signnow yousign zapsign boldsign papersign typeform jotform surveymonkey google-forms wufoo fillout paperform formbricks survey-sparrow surveycto opinion-stage qualaroo rocket-chat feishu nylas"),
+    ("Files & storage", "file sftp s3 gcs azure-blob-storage azure-table google-sheets google-drive microsoft-sharepoint microsoft-onedrive box"),
+    ("Events & ticketing", "eventbrite eventee eventzilla humanitix luma ticketmaster tickettailor pretix oveit goldcast"),
+    ("AI & ML services", "assemblyai claude clarif-ai hugging-face jina-ai-reader nebius-ai devin-ai cursor dust tavus imagga perigon granola"),
+    ("Market & public data", "alpha-vantage alpaca coin finnhub finage finnworlds marketstack polygon stockdata twelve-data yahoo-finance simfin defillama "
+                             "exchange-rates open-exchange-rates nasa news gnews newsdata nytimes the-guardian openweather weatherstack openaq openfda us-census "
+                             "wikipedia rss aviationstack tmdb tvmaze rentcast cimis open-data-dc recreation watchmode pokeapi scryfall"),
+    ("Databases & warehouses", "postgres mysql mssql oracle mongodb bigquery snowflake redshift clickhouse db2 teradata singlestore tidb cockroachdb couchbase dynamodb elasticsearch kafka firebolt firebase convex dremio microsoft-dataverse amazon-sqs"),
+]
+POPULAR = ("stripe shopify google-sheets hubspot salesforce quickbooks xero zoho-crm google-analytics-data-api google-ads facebook-marketing "
+           "zendesk-support freshdesk jira notion airtable slack mailchimp woocommerce amazon-seller-partner zoho-books "
+           "toast clover r365 revel square lightspeed-retail 7shifts").split()
+HIDDEN = {"e2e-test", "smoke-test", "hardcoded-records"}
+
+
+def category(c):
+    cid = c["id"]
+    for name, ids in CATEGORIES:
+        for k in ids.split():
+            if cid == k or cid.startswith(k + "-") or cid.startswith(k):
+                return name
+    return {"database": "Databases & warehouses", "file": "Files & storage"}.get(c.get("subtype"), "Other apps")
+
+
+_bi_cache = {"key": None, "data": []}
+
+
+def _builtins():
+    """Connectors that ship with DataBridge (backend/builtin_connectors/<id>/meta.json + manifest.yaml): always available."""
+    dirs = sorted(p for p in BUILTIN.glob("*") if (p / "manifest.yaml").exists() and (p / "meta.json").exists()) if BUILTIN.exists() else []
+    key = tuple((d.name, (d / "manifest.yaml").stat().st_mtime, (d / "meta.json").stat().st_mtime) for d in dirs)
+    if _bi_cache["key"] != key:
+        out = []
+        for d in dirs:
+            try:
+                m = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+            except ValueError:
+                continue
+            out.append({"id": d.name, "name": m.get("name") or d.name, "runtime": "manifest", "path": str(d), "builtin": True,
+                        "support": "builtin", "stage": m.get("stage") or "", "subtype": "api", "version": m.get("version") or "1.0.0",
+                        "components": (d / "components.py").exists(), "icon": (d / "icon.svg").exists(), "license": "DataBridge",
+                        "hosts": m.get("hosts") or [], "suggested": m.get("suggested") or [], "description": m.get("description") or "",
+                        "location": m.get("location") or "", "category": m.get("category") or "Other apps",
+                        "popular": POPULAR.index(d.name) if d.name in POPULAR else None})
+        _bi_cache.update(key=key, data=out)
+    return _bi_cache["data"]
+
+
+def _library():
     if not CATALOG.exists():
-        if silent:
-            return None
-        raise HTTPException(409, "The connector catalog is not built yet. Data Hub › Connector catalog › Build from GitHub.")
+        return []
     mt = CATALOG.stat().st_mtime
     if _cat_cache["mtime"] != mt:
-        _cat_cache.update(mtime=mt, data=json.loads(CATALOG.read_text(encoding="utf-8"))["connectors"])
+        data = [c for c in json.loads(CATALOG.read_text(encoding="utf-8"))["connectors"] if c["id"] not in HIDDEN]
+        for c in data:
+            c["category"] = category(c)
+            c["popular"] = POPULAR.index(c["id"]) if c["id"] in POPULAR else None
+        _cat_cache.update(mtime=mt, data=data)
     return _cat_cache["data"]
+
+
+def catalog(silent=False):
+    """Built-in connectors first, then the downloaded library (a built-in wins over a library connector with the same id)."""
+    b = _builtins()
+    ids = {c["id"] for c in b}
+    return b + [c for c in _library() if c["id"] not in ids]
+
+
+def licensed(c):
+    if c.get("builtin"):
+        return True
+    return (c.get("license") or "ELv2").lower() in allowed_licenses()
 
 
 def get(cid):
     c = next((x for x in catalog() if x["id"] == cid), None)
+    if c and not licensed(c):
+        raise HTTPException(403, f"{c['name']} is not enabled under this installation's connector licence policy (Admin › Settings › Connectors).")
     if not c:
-        raise HTTPException(404, f"Unknown Airbyte connector: {cid}")
+        raise HTTPException(404, f"Unknown connector: {cid}")
     return c
 
 
 def icon_path(cid):
+    b = next((c for c in _builtins() if c["id"] == cid), None)
+    if b:
+        p = Path(b["path"]) / "icon.svg"
+        return p if p.exists() else None
     p = CONN_DIR / f"source-{re.sub(r'[^a-z0-9_-]', '', cid.lower())}" / "icon.svg"
     return p if p.exists() else None
 
 
+def _conn_dir(c):
+    return Path(c["path"]) if c.get("builtin") else CONN_DIR / c["dir"]
+
+
 def _manifest(c):
     import yaml
-    return yaml.safe_load((CONN_DIR / c["dir"] / "manifest.yaml").read_text(encoding="utf-8"))
+    return yaml.safe_load((_conn_dir(c) / "manifest.yaml").read_text(encoding="utf-8"))
 
 
 # ---------------- runtimes: install ----------------
@@ -236,14 +367,14 @@ def install(cid):
             _log(job, "Preparing the shared runner for all API connectors (one time)…")
             _make_env(d, job)
             spec = env("AIRBYTE_CDK_SPEC", "airbyte-cdk>=7,<8")
-            _log(job, f"install {spec}")
+            _log(job, "Installing the connector runtime…")
             _pip(d, spec, upgrade=True)
             (d / ".ready").write_text(spec, encoding="utf-8")
         elif c["runtime"] == "python":
             d = ENVS / c["id"]
             _make_env(d, job)
             pkg = c["pypi"] or f"airbyte-source-{c['id']}"
-            _log(job, f"install {pkg}=={c['version']}")
+            _log(job, f"Installing {c['name']} {c['version']}…")
             try:
                 _pip(d, f"{pkg}=={c['version']}")
             except RuntimeError:
@@ -252,9 +383,8 @@ def install(cid):
             (d / ".ready").write_text(pkg, encoding="utf-8")
         else:
             if not shutil.which("docker"):
-                raise RuntimeError("This connector needs Docker (it is written in Java). Install Docker Desktop, or use DataBridge's built-in "
-                                   "database connectors (Postgres, MySQL, SQL Server, Oracle).")
-            _log(job, f"docker pull {c['image']}")
+                raise RuntimeError("This connector needs Docker Desktop. For Postgres, MySQL, SQL Server and Oracle use the built-in database connectors instead.")
+            _log(job, f"Downloading the {c['name']} image…")
             _run(["docker", "pull", c["image"]], timeout=3600)
         _log(job, "Ready.")
         _jobs[job]["state"] = "done"
@@ -281,19 +411,20 @@ def _command(c, cmd, files):
     if c["runtime"] == "manifest":
         py = _venv_python(ENVS / "cdk")
         if not (ENVS / "cdk" / ".ready").exists():
-            raise AirbyteError("The connector runner is not installed yet — click Install / Prepare on the connector.")
-        args += ["--manifest-path", str(CONN_DIR / c["dir"] / "manifest.yaml")]
+            raise AirbyteError("The connector runtime is not installed yet — click Install on the connector.")
+        args += ["--manifest-path", str(_conn_dir(c) / "manifest.yaml")]
         if c["components"]:
-            args += ["--components-path", str(CONN_DIR / c["dir"] / "components.py")]
+            args += ["--components-path", str(_conn_dir(c) / "components.py")]
         return [str(py), "-c", "from airbyte_cdk.cli.source_declarative_manifest import run; run()"] + args
     exe = _venv_bin(ENVS / c["id"], f"source-{c['id']}")
     if not exe.exists():
-        raise AirbyteError(f"{c['name']} is not installed yet — click Install / Prepare on the connector.")
+        raise AirbyteError(f"{c['name']} is not installed yet — click Install on the connector.")
     return [str(exe)] + args
 
 
-def run(c, cmd, config=None, catalog_=None, state=None, on_record=None, limit=None, timeout=None):
-    """Run spec/check/discover/read. Returns {spec|status|catalog, states, logs, records(count)}. on_record(stream, data)."""
+def run(c, cmd, config=None, catalog_=None, state=None, on_record=None, limit=None, timeout=None, on_state=None):
+    """Run spec/check/discover/read. Returns {spec|status|catalog, states, logs, records(count)}. on_record(stream, data),
+    on_state(state) at each checkpoint the connector emits (an exception from a callback stops the connector)."""
     with tempfile.TemporaryDirectory(prefix="dbab-") as td:
         files = {}
         if config is not None:
@@ -342,6 +473,8 @@ def run(c, cmd, config=None, catalog_=None, state=None, on_record=None, limit=No
                         break
                 elif t == "STATE":
                     out["states"].append(m["state"])
+                    if on_state:
+                        on_state(m["state"])
                 elif t == "LOG":
                     lg = m.get("log") or {}
                     out["logs"] = (out["logs"] + [f"{lg.get('level')}: {str(lg.get('message'))[:500]}"])[-60:]
@@ -363,6 +496,9 @@ def run(c, cmd, config=None, catalog_=None, state=None, on_record=None, limit=No
                     p.kill()
                     out["errors"].append(f"stopped after {timeout} s")
                     break
+        except BaseException:
+            p.kill()                       # a callback failed (e.g. a checkpoint load): stop the connector, report the error
+            raise
         finally:
             try:
                 p.wait(timeout=30)
@@ -371,9 +507,9 @@ def run(c, cmd, config=None, catalog_=None, state=None, on_record=None, limit=No
             t_err.join(timeout=5)
         if p.returncode not in (0, None) and not killed and not out["records"] and not out.get("catalog") and not out.get("status") and not out.get("spec"):
             msg = (out["errors"] or [""])[-1] or "\n".join(err_lines[-15:]) or "\n".join(out["logs"][-10:])
-            raise AirbyteError(f"{c['name']} {cmd} failed: {msg[-2000:]}")
+            raise AirbyteError(scrub(f"{c['name']} {cmd} failed: {msg[-2000:]}"))
         if out["errors"] and cmd == "read" and not out["records"]:
-            raise AirbyteError(f"{c['name']}: {out['errors'][-1]}")
+            raise AirbyteError(scrub(f"{c['name']}: {out['errors'][-1]}"))
         return out
 
 
@@ -383,18 +519,23 @@ def spec(cid):
     if c["runtime"] == "manifest":
         m = _manifest(c)
         s = (m.get("spec") or {})
-        return {"connector": c, "schema": s.get("connection_specification") or {}, "docs": s.get("documentation_url") or c["docs"], "ready": runtime_ready(c)}
+        return {"connector": c, "schema": _scrub_schema(s.get("connection_specification") or {}), "docs": _docs(c), "ready": runtime_ready(c)}
     if not runtime_ready(c):
         return {"connector": c, "schema": None, "ready": False}
     sp = (run(c, "spec").get("spec") or {})
-    return {"connector": c, "schema": sp.get("connectionSpecification") or {}, "docs": sp.get("documentationUrl") or c["docs"], "ready": True}
+    return {"connector": c, "schema": _scrub_schema(sp.get("connectionSpecification") or {}), "docs": _docs(c), "ready": True}
+
+
+def _docs(c):
+    """Documentation links point upstream; hidden unless CONNECTORS_SHOW_DOCS=true."""
+    return c.get("docs") if (_env("CONNECTORS_SHOW_DOCS", "false") or "").lower() == "true" else None
 
 
 def _secret_keys(schema, acc=None):
     acc = set() if acc is None else acc
     if isinstance(schema, dict):
         for k, v in (schema.get("properties") or {}).items():
-            if isinstance(v, dict) and v.get("airbyte_secret"):
+            if isinstance(v, dict) and (v.get("airbyte_secret") or v.get("x_secret")):
                 acc.add(k)
             _secret_keys(v, acc)
         for key in ("oneOf", "anyOf", "allOf"):
@@ -449,7 +590,43 @@ def clean_config(cfg, old=None):
     vals = cfg.get("values") or {}
     if not isinstance(vals, dict):
         raise HTTPException(400, "Connector settings must be an object")
-    return {"connector": cid, "values": _walk_unmask(vals, (old or {}).get("values") or {})}
+    return {"connector": cid, "values": _fix_dates(_walk_unmask(vals, (old or {}).get("values") or {}), _schema_for(cid))}
+
+
+_DATE_IN = re.compile(r"^(\d{4}-\d{2}(?:-\d{2})?)(?:[T ](\d{2}:\d{2})(?::(\d{2}))?(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$")
+
+
+def _fix_dates(vals, schema):
+    """Dates typed in another format (2025-03-20) are rewritten to what the connector's pattern expects (2025-03-20T00:00:00Z)."""
+    if not isinstance(vals, dict) or not isinstance(schema, dict):
+        return vals
+    props = schema.get("properties") or {}
+    out = dict(vals)
+    for k, v in vals.items():
+        p = props.get(k) or {}
+        if isinstance(v, dict):
+            subs = [p] + list(p.get("oneOf") or [])
+            for sub in subs:
+                if isinstance(sub, dict) and sub.get("properties"):
+                    out[k] = _fix_dates(v, sub)
+            continue
+        pat = p.get("pattern") if isinstance(p, dict) else None
+        if not isinstance(v, str) or not pat:
+            continue
+        try:
+            rx = re.compile(pat)
+        except re.error:
+            continue
+        m = _DATE_IN.match(v.strip())
+        if rx.search(v) or not m:
+            continue
+        d, hm, sec = m.group(1), m.group(2) or "00:00", m.group(3) or "00"
+        t = f"{hm}:{sec}"
+        for cand in (f"{d}T{t}Z", f"{d}T{t}.000Z", f"{d}T{t}", f"{d} {t}", d[:10], d[:7]):
+            if rx.search(cand):
+                out[k] = cand
+                break
+    return out
 
 
 # ---------------- check / discover / read ----------------
@@ -458,13 +635,14 @@ _disc = {}           # key -> (time, catalog)
 
 def check(cfg):
     c = get(cfg["connector"])
+    cfg = {**cfg, "values": _fix_dates(cfg.get("values") or {}, _schema_for(c["id"]))}
     try:
         r = run(c, "check", cfg.get("values") or {}, timeout=300)
     except AirbyteError as e:
         raise HTTPException(400, str(e))
     st = r.get("status") or {}
     if st.get("status") != "SUCCEEDED":
-        raise HTTPException(400, f"{c['name']}: {st.get('message') or (r['errors'] or ['check failed'])[-1]}")
+        raise HTTPException(400, scrub(f"{c['name']}: {st.get('message') or (r['errors'] or ['check failed'])[-1]}"))
     return f"Connected to {c['name']}"
 
 
@@ -513,21 +691,44 @@ def configured_catalog(stream, mode, cursor=None, keys=None):
     return {"streams": [cs]}, inc
 
 
-def read(cfg, stream_name, mode, cursor, keys, prev_state, on_record, limit=None, key=None):
-    """Read one stream. prev_state: list of AirbyteStateMessage from the last successful run (incremental)."""
+def read(cfg, stream_name, mode, cursor, keys, prev_state, on_record, limit=None, key=None, on_state=None):
+    """Read one stream. prev_state: list of AirbyteStateMessage from the last successful run (incremental).
+    on_state(states): called at every checkpoint of an incremental read with the state to resume from."""
     c = get(cfg["connector"])
+    cfg = {**cfg, "values": _fix_dates(cfg.get("values") or {}, _schema_for(c["id"]))}
     cat = discover(cfg, key)
     stream = next((s for s in cat["streams"] if s["name"] == stream_name), None)
     if not stream:
         raise HTTPException(400, f"{c['name']} has no stream named {stream_name!r} (any more)")
     cc, inc = configured_catalog(stream, mode, cursor, keys)
-    try:
-        r = run(c, "read", cfg.get("values") or {}, cc, prev_state if (inc and prev_state) else None, on_record=on_record, limit=limit)
-    except AirbyteError as e:
-        raise HTTPException(400, str(e))
     # keep the latest state message per stream (or the global one)
     latest = {}
-    for s in r["states"]:
+
+    def _keep(s):
         k = s.get("type") == "STREAM" and json.dumps((s.get("stream") or {}).get("stream_descriptor") or {}, sort_keys=True) or s.get("type") or "LEGACY"
         latest[k] = s
-    return {"records": r["records"], "state": list(latest.values()) if inc else None, "incremental": inc, "logs": r["logs"][-20:]}
+        if on_state and inc:
+            on_state(list(latest.values()))
+    try:
+        r = run(c, "read", cfg.get("values") or {}, cc, prev_state if (inc and prev_state) else None, on_record=on_record, limit=limit, on_state=_keep)
+    except AirbyteError as e:
+        raise HTTPException(400, str(e))
+    return {"records": r["records"], "state": list(latest.values()) if inc else None, "incremental": inc, "logs": [scrub(x) for x in r["logs"][-20:]]}
+
+
+NOTICE = """Third-party software used by the connector library
+
+Connector definitions (metadata, manifests, components) are downloaded at install time from the
+open-source repository configured in CONNECTORS_REPO_URL and are © their respective authors.
+Each connector carries its own licence (shown on the connector): most are licensed under the
+Elastic License 2.0 (ELv2) and some under the MIT License. The connector runtime (python package
+"airbyte-cdk") is licensed under the MIT License. Licence texts are in the downloaded library
+under .stratum/airbyte_local/repo and on each package's PyPI page. Trademarks belong to their owners.
+
+Built-in connectors (Toast, Clover, Restaurant365, Revel) are part of DataBridge and need no library download."""
+
+
+def notices():
+    cat = _library()
+    from collections import Counter
+    return {"text": NOTICE, "licenses": dict(Counter(c.get("license") or "ELv2" for c in cat)), "allowed": sorted(allowed_licenses())}

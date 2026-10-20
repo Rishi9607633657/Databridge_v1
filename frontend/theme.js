@@ -43,3 +43,27 @@
     apply(read());
   });
 }());
+
+/* DataBridge design ("skin"): the look of the whole app, chosen in Admin › Settings › Look & feel.
+   Cached in localStorage so the page never flashes the old look; ?skin=<name> previews one in this tab only. */
+(function () {
+  const KEY = 'databridge-skin';
+  const SKINS = ['classic', 'saffron', 'studio', 'midnight', 'ledger'];   // fonts: /static/vendor/fonts (bundled, offline)
+  const url = new URLSearchParams(location.search).get('skin');
+  const read = () => { try { return localStorage.getItem(KEY) || 'classic'; } catch { return 'classic'; } };
+  function apply(name) {
+    const skin = SKINS.includes(name) ? name : 'classic';
+    document.documentElement.dataset.skin = skin;
+    window.dispatchEvent(new CustomEvent('db-skin', { detail: { skin } }));
+  }
+  window.DBSkin = {
+    list: SKINS,
+    get: () => document.documentElement.dataset.skin || 'classic',
+    /* the server's choice (from /api/auth/me) */
+    server(name) { if (url) return; try { localStorage.setItem(KEY, name || 'classic'); } catch { /* private mode */ } apply(name || 'classic'); },
+    /* try a look without saving it */
+    preview: apply,
+  };
+  apply(url || read());
+}());
+

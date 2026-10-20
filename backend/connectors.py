@@ -67,7 +67,7 @@ TYPES = {
         F("page_param", "Page / offset / cursor parameter", default="page"), F("size_param", "Page-size parameter", default="per_page"),
         F("page_size", "Page size", "number", default=100), F("next_path", "Next URL / cursor path in the response", placeholder="links.next  or  meta.next_cursor"),
         F("max_pages", "Max pages per run", "number", default=500)]},
-    "airbyte": {"label": "Airbyte connector", "group": "Airbyte connectors", "icon": "airbyte", "kind": "airbyte", "fields": []},
+    "airbyte": {"label": "Connector library", "group": "Connector library", "icon": "library", "kind": "airbyte", "fields": []},
 }
 
 
@@ -96,6 +96,8 @@ def _save(f, d):
 
 def _public(c):
     c = json.loads(json.dumps(c))
+    from . import tenants
+    c["tenancy"] = tenants.label(c)
     if c["type"] == "airbyte":
         from . import airbyte_local
         c["config"] = airbyte_local.mask(c.get("config") or {})
@@ -156,11 +158,13 @@ def save_connection(body, cid=None, user=None):
             from . import airbyte_local
             airbyte_local.forget(cid)
         cfg = _clean_config(t, body.get("config"), (old or {}).get("config"))
+        from . import tenants
+        ten = tenants.validate_assignment(body, old)
         if old:
-            old.update(name=name, config=cfg, updated=time.time())
+            old.update(name=name, config=cfg, updated=time.time(), **ten)
             rec = old
         else:
-            rec = {"id": uuid.uuid4().hex[:12], "type": t, "name": name, "config": cfg, "created": time.time(), "user": user}
+            rec = {"id": uuid.uuid4().hex[:12], "type": t, "name": name, "config": cfg, "created": time.time(), "user": user, **ten}
             conns.append(rec)
         _save(CONN_FILE, conns)
         return _public(rec)
@@ -682,8 +686,17 @@ def _write_part(df: pd.DataFrame, path: Path, as_text=False):
     return len(df)
 
 
-def _extract(c, st, state, out_dir: Path, log):
-    """Write one stream as Parquet parts. Returns (rows, new_state_for_stream)."""
+def _commit_rows():
+    try:
+        return max(1, int(env("DATAHUB_COMMIT_ROWS", "200000") or 200000))
+    except ValueError:
+        return 200000
+
+
+def _extract(c, st, state, out_dir: Path, log, commit=None):
+    """Write one stream as Parquet / JSON-lines parts. Returns (rows, new_state_for_stream).
+    commit(states): optional checkpoint — loads the parts written so far into the table and saves the state, so a long
+    history backfill resumes where it stopped instead of starting over."""
     t, cfg = c["type"], c["config"]
     kind = TYPES[t]["kind"]
     mode, cursor_col = st.get("mode") or "full", st.get("cursor")
@@ -760,7 +773,16 @@ def _extract(c, st, state, out_dir: Path, log):
             rows += _write_part(df, out_dir / "part-00000.parquet", True)
     elif kind == "airbyte":
         from . import airbyte_local
-        fh = {"f": None, "n": 0}
+        fh = {"f": None, "n": 0, "since": 0}
+        every = _commit_rows()
+
+        def on_state(states):
+            if commit and fh["n"] - fh["since"] >= every:
+                if fh["f"]:
+                    fh["f"].close()
+                    fh["f"] = None
+                commit(states)
+                fh["since"] = fh["n"]
 
         def on_record(_s, data):
             if fh["f"] is None or fh["n"] % CHUNK == 0:
@@ -772,7 +794,8 @@ def _extract(c, st, state, out_dir: Path, log):
             if fh["n"] % 10000 == 0:
                 log(f"{st['table']}: {fh['n']:,} records")
         try:
-            res = airbyte_local.read(cfg, st["source"], mode, cursor_col, st.get("keys"), (state or {}).get("airbyte_state"), on_record, key=c["id"])
+            res = airbyte_local.read(cfg, st["source"], mode, cursor_col, st.get("keys"), (state or {}).get("airbyte_state"), on_record, key=c["id"],
+                                     on_state=on_state if commit else None)
         finally:
             if fh["f"]:
                 fh["f"].close()
@@ -821,12 +844,88 @@ def _stream_table(s):
 def list_syncs():
     syncs = _load(SYNC_FILE, [])
     conns = {c["id"]: c for c in _load(CONN_FILE, [])}
+    from . import tenants
     for s in syncs:
         c = conns.get(s["connection_id"]) or {}
-        s["connection"] = {"name": c.get("name"), "type": c.get("type"), "connector": (c.get("config") or {}).get("connector") if c.get("type") == "airbyte" else None}
+        s["connection"] = {"name": c.get("name"), "type": c.get("type"), "connector": (c.get("config") or {}).get("connector") if c.get("type") == "airbyte" else None,
+                           "tenancy": tenants.label(c) if c else None}
         s["running"] = s["id"] in _RUNNING
         s["next_run"] = _next_run(s)
+        s["positions"] = {t: _position(v) for t, v in (s.get("state") or {}).items()}
     return syncs
+
+
+def _as_dt(v):
+    """A cursor value as a datetime (UTC when it has a zone), or None: ISO text, or epoch seconds / milliseconds."""
+    from datetime import timezone
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)) or (isinstance(v, str) and v.isdigit()):
+        n = float(v)
+        n = n / 1000 if n > 1e11 else n
+        return datetime.fromtimestamp(n, tz=timezone.utc) if 9e8 < n < 5e9 else None
+    if isinstance(v, str) and re.match(r"^\d{4}-\d{2}-\d{2}", v):
+        t = v.strip().replace("Z", "+00:00").replace(" ", "T", 1)
+        t = re.sub(r"(\.\d{1,6})\d*", r"\1", t)                       # .1234567 -> .123456
+        t = re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", t)               # +0000 -> +00:00
+        try:
+            d = datetime.fromisoformat(t)
+        except ValueError:
+            return None
+        return d.astimezone(timezone.utc) if d.tzinfo else d
+    return None
+
+
+def _fmt_dt(d):
+    return d.strftime("%Y-%m-%d %H:%M:%S") + (" UTC" if d.tzinfo else "")
+
+
+def _position(ns):
+    """How far a stream has synced: the cursor of the slowest location / partition (and the newest), or files seen."""
+    if not isinstance(ns, dict):
+        return None
+    if ns.get("cursor") is not None:
+        d = _as_dt(ns["cursor"])
+        return {"cursor": _fmt_dt(d) if d else str(ns["cursor"])}
+    if ns.get("files"):
+        return {"files": len(ns["files"])}
+    vals = []
+    for m in ns.get("airbyte_state") or []:
+        ss = ((m.get("stream") or {}).get("stream_state") or {}) if isinstance(m, dict) else {}
+        parts = ss.get("states")
+        if isinstance(parts, list) and parts:
+            vals += [next(iter((p.get("cursor") or {}).values()), None) for p in parts]
+        else:
+            vals += [v for k, v in ss.items() if not k.startswith("__ab") and k not in ("use_global_cursor", "lookback_window", "state_type")]
+    ds = sorted({d for d in (_as_dt(v) for v in vals) if d}, key=lambda d: d.timestamp() if d.tzinfo else d.replace(tzinfo=None).timestamp())
+    if not ds:
+        return None
+    return {"cursor": _fmt_dt(ds[0]), "latest": _fmt_dt(ds[-1]), "partitions": len([v for v in vals if _as_dt(v)])}
+
+
+def reset_state(sid, tables=None):
+    """Forget where a sync got to: the next run reloads history from the connector's start date (Upsert keeps it duplicate-free)."""
+    if sid in _RUNNING:
+        raise HTTPException(409, "Wait for the running sync to finish")
+    with _lock:
+        syncs = _load(SYNC_FILE, [])
+        s = next((x for x in syncs if x["id"] == sid), None)
+        if not s:
+            raise HTTPException(404, "Sync not found")
+        st = s.setdefault("state", {})
+        for t in (tables or [x["table"] for x in s["streams"]]):
+            st.pop(t, None)
+        _save(SYNC_FILE, syncs)
+    return {"ok": True}
+
+
+def _save_stream_state(sid, table, ns):
+    with _lock:
+        syncs = _load(SYNC_FILE, [])
+        for x in syncs:
+            if x["id"] == sid:
+                x.setdefault("state", {})[table] = ns
+        _save(SYNC_FILE, syncs)
 
 
 _TYPES_OK = re.compile(r"^(auto|string|json|bigint|int|double|boolean|date|timestamp|decimal\(\d{1,2},\d{1,2}\))$")
@@ -887,10 +986,12 @@ def _validate_transform(t, tbl):
 def _validate_sync(body):
     if not body.get("connection_id"):
         raise HTTPException(400, "Pick a connection")
-    _get_conn(body["connection_id"])
+    conn = _get_conn(body["connection_id"])
     schema = (body.get("target_schema") or "").strip()
-    if not _ID.match(schema):
-        raise HTTPException(400, "Catalog schema: letters, digits and _ only")
+    if not _ID.match(schema.replace("{tenant}", "t")):
+        raise HTTPException(400, "Catalog schema: letters, digits and _ only (and {tenant} for one schema per tenant)")
+    if "{tenant}" in schema and not conn.get("tenant_id"):
+        raise HTTPException(400, "{tenant} in the schema name needs a connection assigned to a tenant (Connections › Edit)")
     sts = []
     for st in body.get("streams") or []:
         tbl = (st.get("table") or "").strip().lower()
@@ -1038,8 +1139,31 @@ def start_run(sid, trigger="manual", user=None):
     return run
 
 
+def _resolve_schema(s, stamp):
+    sch = s["target_schema"]
+    if "{tenant}" in sch:
+        if not stamp:
+            raise HTTPException(400, "{tenant} in the schema name needs the connection to be assigned to a tenant")
+        sch = sch.replace("{tenant}", stamp["tenant"])
+    return sch
+
+
+def _plan_item(c, st, i, path_dir: Path, mode, stamp, prev=None):
+    from .datahub import file_uri
+    return {"i": i, "path": file_uri(path_dir), "table": st["table"], "mode": mode, "keys": st.get("keys") or [],
+            "infer": TYPES[c["type"]]["kind"] != "db", "cursor": st.get("cursor"), "transform": st.get("transform") or {},
+            "fmt": "json" if any(path_dir.glob("*.json")) else "parquet", "stamp": stamp,
+            "prev_businesses": ((prev or {}).get("businesses") if stamp and mode == "overwrite" else None)}
+
+
+def _load_code(schema, fmt, items, comment):
+    from .datahub import SAVE_FN
+    return SAVE_FN + TRANSFORM_FN + _LOAD_CODE.replace("__PLAN__", repr(json.dumps({"schema": schema, "fmt": fmt, "items": items, "comment": comment})))
+
+
 async def _execute(s, run):
-    from .datahub import SAVE_FN, file_uri, kernel_exec
+    from .datahub import kernel_exec
+    from . import tenants
     stage = STAGE / run["id"]
     t0 = time.time()
 
@@ -1051,37 +1175,68 @@ async def _execute(s, run):
             run["status"] = "running"
             _put_run(run)
             c = _get_conn(s["connection_id"])
+            stamp = tenants.stamp(c)
+            schema = _resolve_schema(s, stamp)
+            fmt = s.get("format") or "delta"
+            comment = f"Synced by DataBridge from {c['name']}"
+            if stamp:
+                log(f"Tenant {stamp['tenant']}: rows get {stamp['tcol']} = {stamp['tenant']}, {stamp['bcol']} = "
+                    + (stamp.get("business") or (f"from {stamp['bfrom']}" if stamp.get("bfrom") else "(none)")))
+            loop = asyncio.get_running_loop()
             state = dict(s.get("state") or {})
             new_state, plan = {}, []
             for i, st in enumerate(s["streams"]):
                 rs = run["streams"][i]
                 rs["status"] = "extracting"
                 _put_run(run)
+                base = {"full": "overwrite", "append": "append", "merge": "merge"}[st["mode"]]
+                out_dir = stage / st["table"]
+                done = {"n": 0}
+
+                def commit(states, _i=i, _st=st, _rs=rs, _done=done, _out=out_dir, _base=base):
+                    # checkpoint inside a long read: load what is on disk, then remember the connector state
+                    mode = _base if (_done["n"] == 0 or _base != "overwrite") else "append"
+                    code = _load_code(schema, fmt, [_plan_item(c, _st, _i, _out, mode, stamp)], comment)
+                    res = asyncio.run_coroutine_threadsafe(kernel_exec(code), loop).result()
+                    it = (res.get("items") or [{}])[0]
+                    if it.get("error"):
+                        raise RuntimeError(it["error"])
+                    _done["n"] += 1
+                    _save_stream_state(s["id"], _st["table"], {**(state.get(_st["table"]) or {}), "airbyte_state": states})
+                    for f in _out.glob("part-*"):
+                        f.unlink(missing_ok=True)
+                    _rs["checkpoints"] = _done["n"]
+                    log(f"{_st['table']}: checkpoint {_done['n']} written to {schema}.{_st['table']} — a restart continues from here")
+                    _put_run(run)
                 try:
-                    rows, ns = await asyncio.to_thread(_extract, c, st, state.get(st["table"]), stage / st["table"], log)
-                    rs.update(rows=rows, status="loading" if rows else "no new data")
+                    rows, ns = await asyncio.to_thread(_extract, c, st, state.get(st["table"]), out_dir, log,
+                                                       commit if st["mode"] in ("append", "merge") else None)
                     new_state[st["table"]] = ns
-                    if rows:
-                        plan.append({"i": i, "path": file_uri(stage / st["table"]), "table": st["table"],
-                                     "mode": {"full": "overwrite", "append": "append", "merge": "merge"}[st["mode"]], "keys": st.get("keys") or [],
-                                     "infer": TYPES[c["type"]]["kind"] != "db", "cursor": st.get("cursor"), "transform": st.get("transform") or {},
-                                     "fmt": "json" if any((stage / st["table"]).glob("*.json")) else "parquet"})
+                    left = out_dir.exists() and any(out_dir.glob("part-*"))
+                    if rows and left:
+                        rs.update(rows=rows, status="loading")
+                        plan.append(_plan_item(c, st, i, out_dir, base if (done["n"] == 0 or base != "overwrite") else "append", stamp, state.get(st["table"])))
+                    elif rows:                                   # everything already went in through checkpoints
+                        rs.update(rows=rows, status="succeeded", table=f"{schema}.{st['table']}")
+                    else:
+                        rs.update(rows=0, status="no new data")
                 except Exception as e:  # noqa: BLE001
                     rs.update(status="failed", error=str(getattr(e, "detail", None) or e)[:1500])
                 log(f"{st['table']}: {rs['status']} ({rs['rows']:,} rows)")
                 _put_run(run)
             if plan:
-                log(f"Writing {len(plan)} table(s) to {s['target_schema']} with Spark…")
+                log(f"Writing {len(plan)} table(s) to {schema} with Spark…")
                 _put_run(run)
-                code = SAVE_FN + TRANSFORM_FN + _LOAD_CODE.replace("__PLAN__", repr(json.dumps({"schema": s["target_schema"], "fmt": s.get("format") or "delta",
-                                                                                  "items": plan, "comment": f"Synced by DataBridge from {c['name']}"})))
-                res = await kernel_exec(code)
+                res = await kernel_exec(_load_code(schema, fmt, plan, comment))
                 for item in res.get("items") or []:
                     rs = run["streams"][item["i"]]
                     if item.get("error"):
                         rs.update(status="failed", error=item["error"])
                     else:
-                        rs.update(status="succeeded", format=item.get("format"), table=f"{s['target_schema']}.{run['streams'][item['i']]['table']}")
+                        rs.update(status="succeeded", format=item.get("format"), table=f"{schema}.{rs['table']}")
+                        tname = s["streams"][item["i"]]["table"]
+                        if item.get("businesses") is not None and tname in new_state:
+                            new_state[tname] = {**(new_state[tname] or {}), "businesses": item["businesses"]}
             # save state only for streams that fully succeeded (or had nothing new)
             with _lock:
                 syncs = _load(SYNC_FILE, [])
@@ -1173,6 +1328,47 @@ def __db_flatten(df, depth):
                 cols.append(__F2.col("`%s`" % f.name))
         df = df.select(*cols)
     return df
+def __db_colname(df, k):
+    lk = str(k).lower()
+    return next((c for c in df.columns if c.lower() == lk), k)
+def __db_bsrc(df, name, skip):
+    # business source column; a.b reaches into a nested STRUCT (e.g. location.id)
+    parts = str(name).split(".")
+    head = __db_colname(df, parts[0])
+    if head not in df.columns or head in skip:
+        return None
+    e = __F2.col("`%s`" % head + "".join(".`%s`" % p for p in parts[1:])).cast("string")
+    try:
+        df.select(e).schema
+    except Exception:
+        return None
+    return e
+def __db_stamp(df, S):
+    # tenant / business columns first; business = fixed code, or from a column mapped through the businesses' source IDs
+    tc, bc = S["tcol"], S["bcol"]
+    df = df.withColumn(tc, __F2.lit(S["tenant"]))
+    if S.get("business"):
+        df = df.withColumn(bc, __F2.lit(S["business"]))
+    elif S.get("bfrom") and __db_bsrc(df, S["bfrom"], (tc, bc)) is not None:
+        src = __db_bsrc(df, S["bfrom"], (tc, bc))
+        e = None
+        for k, v in (S.get("bmap") or {}).items():
+            e = __F2.when(src == k, __F2.lit(v)) if e is None else e.when(src == k, __F2.lit(v))
+        df = df.withColumn(bc, src if e is None else e.otherwise(src))
+    else:
+        df = df.withColumn(bc, __F2.lit(None).cast("string"))
+    return df.select(tc, bc, *[c for c in df.columns if c not in (tc, bc)])
+def __db_slice(df, S, prev=None):
+    # the rows a full refresh replaces in a shared table: this tenant, and the businesses in the new data plus the ones
+    # this sync wrote last time (so a business that disappeared or changed is replaced too); other tenants are untouched
+    tc, bc = S["tcol"], S["bcol"]
+    q = lambda v: "NULL" if v is None else "'" + str(v).replace("\\", "\\\\").replace("'", "\\'") + "'"
+    vals = [r[0] for r in df.select(bc).distinct().limit(5000).collect()]
+    allv = list(dict.fromkeys(vals + list(prev or [])))
+    cond = "(`%s` <=> %s)" % (tc, q(S["tenant"]))
+    if allv:
+        cond += " AND (" + " OR ".join("(`%s` <=> %s)" % (bc, q(v)) for v in allv) + ")"
+    return cond, vals
 def __db_transform(df, T, mode=None, keys=None, cursor=None):
     T = T or {}
     ex = T.get("explode")
@@ -1200,12 +1396,12 @@ def __db_transform(df, T, mode=None, keys=None, cursor=None):
     if T.get("filter"):
         df = df.where(__F2.expr(T["filter"]))
     dd = dict(T.get("dedup") or {})
-    dkeys = [k for k in (dd.get("keys") or []) if k in df.columns]
+    dkeys = [__db_colname(df, k) for k in (dd.get("keys") or []) if __db_colname(df, k) in df.columns]
     if not dkeys and mode == "merge" and keys:          # an upsert needs exactly one source row per key
-        dkeys = [k for k in keys if k in df.columns]
+        dkeys = [__db_colname(df, k) for k in keys if __db_colname(df, k) in df.columns]
         dd = {"order_by": cursor, "desc": True}
     if dkeys:
-        ob = dd.get("order_by")
+        ob = __db_colname(df, dd.get("order_by")) if dd.get("order_by") else None
         if ob and ob in df.columns:
             order = __F2.col("`%s`" % ob).desc_nulls_last() if dd.get("desc", True) else __F2.col("`%s`" % ob).asc_nulls_last()
         else:
@@ -1223,14 +1419,24 @@ _LOAD_CODE = r"""
 __P = __j.loads(__PLAN__)
 __res = []
 for __it in __P["items"]:
+    __bvals = None
     try:
         __df = __db_read(__it)
         if __it.get("infer"):
             __df = __db_infer(__df)
         __df = __db_transform(__df, __it.get("transform"), __it["mode"], __it.get("keys"), __it.get("cursor"))
+        __keys = [__db_colname(__df, k) for k in (__it.get("keys") or [])]
+        __where = None
+        __S = __it.get("stamp")
+        if __S:
+            __df = __db_stamp(__df, __S)
+            if __keys:
+                __keys = [__S["tcol"], __S["bcol"]] + [k for k in __keys if k.lower() not in (__S["tcol"], __S["bcol"])]
+            if __it["mode"] == "overwrite":
+                __where, __bvals = __db_slice(__df, __S, __it.get("prev_businesses"))
         __df = __df.withColumn("_synced_at", __F.current_timestamp())
-        __fmt = __db_save(__df, __P["schema"], __it["table"], __it["mode"], __P["fmt"], __P["comment"], __it["keys"] or None)
-        __res.append({"i": __it["i"], "format": __fmt})
+        __fmt = __db_save(__df, __P["schema"], __it["table"], __it["mode"], __P["fmt"], __P["comment"], __keys or None, __where)
+        __res.append({"i": __it["i"], "format": __fmt, **({"businesses": __bvals} if __where else {})})
     except Exception as __e:
         __res.append({"i": __it["i"], "error": str(__e)[:1500]})
 print("__DBH__" + __j.dumps({"items": __res}))
@@ -1331,7 +1537,7 @@ def mark_interrupted():
 
 async def scheduler_loop():
     """Every few seconds: start due syncs (real-time / interval / daily) and watch folders for 'new files' events."""
-    mark_interrupted()
+    await asyncio.to_thread(mark_interrupted)
     watched = {}                                   # sync id -> last time its folder was checked
     while True:
         await asyncio.sleep(5)

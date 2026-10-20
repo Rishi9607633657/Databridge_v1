@@ -526,7 +526,7 @@ def __db_create(df, schema, table, fmt):
     df.write.mode("overwrite").option("overwriteSchema", "true").format(fmt).save(loc)
     spark.sql("CREATE TABLE IF NOT EXISTS %s USING %s LOCATION '%s'" % (name, fmt, loc.replace("'", "\\'")))
     return fmt
-def __db_save(df, schema, table, mode, fmt, comment=None, keys=None):
+def __db_save(df, schema, table, mode, fmt, comment=None, keys=None, where=None):
     spark.sql("CREATE DATABASE IF NOT EXISTS `%s`" % schema)
     name = "`%s`.`%s`" % (schema, table)
     exists = __db_exists(schema, table)
@@ -542,13 +542,45 @@ def __db_save(df, schema, table, mode, fmt, comment=None, keys=None):
     if mode == "create" and exists:
         raise ValueError("Table %s.%s already exists. Choose Replace or Append, or another name." % (schema, table))
     prov = __db_provider(name) if exists else None
-    if mode == "merge" and exists and prov == "delta" and keys:
+    if where and exists and mode == "overwrite":
+        # shared (multi-tenant) table: replace only the rows matching `where` (this tenant's businesses), keep the rest
+        cur = spark.read.table(name)
+        have = {c.lower() for c in cur.columns}
+        miss = [f for f in df.schema.fields if f.name.lower() not in have]     # e.g. tenant / business on an older table
+        if prov == "delta":
+            if miss:
+                spark.sql("ALTER TABLE %s ADD COLUMNS (%s)" % (name, ", ".join("`%s` %s" % (f.name, f.dataType.simpleString()) for f in miss)))
+            loc = __db_table_loc(name)
+            w = df.write.mode("overwrite").option("replaceWhere", where).option("mergeSchema", "true").format("delta")
+            w.save(loc) if loc else w.saveAsTable(name)
+            used = "delta"
+        else:
+            for f in miss:
+                cur = cur.withColumn(f.name, __F.lit(None).cast(f.dataType))
+            keep = cur.where("NOT (%s)" % where)
+            both = keep.unionByName(df, allowMissingColumns=True).localCheckpoint(True)
+            __db_wipe(schema, table)
+            used = __db_create(both, schema, table, prov if prov in ("parquet", "orc") else fmt)
+    elif mode == "merge" and exists and prov == "delta" and keys:
         from delta.tables import DeltaTable
+        try:                              # key columns added later (e.g. tenant / business): add them to the table first
+            have = {c.lower() for c in spark.read.table(name).columns}
+            miss = [k for k in keys if k.lower() not in have]
+            if miss:
+                spark.sql("ALTER TABLE %s ADD COLUMNS (%s)" % (name, ", ".join("`%s` STRING" % k for k in miss)))
+        except Exception:
+            pass
         src = df.dropDuplicates(keys)
         cond = " AND ".join("t.`%s` <=> s.`%s`" % (k, k) for k in keys)
         spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
         DeltaTable.forName(spark, name).alias("t").merge(src.alias("s"), cond).whenMatchedUpdateAll().whenNotMatchedInsertAll().execute()
         used = "delta"
+    elif mode in ("append", "merge") and exists and prov != "delta" and \
+            {c.lower() for c in spark.read.table(name).columns} != {c.lower() for c in df.columns}:
+        # Parquet / ORC table whose columns changed (new API fields, tenant columns…): rewrite it with the union of both
+        both = spark.read.table(name).unionByName(df, allowMissingColumns=True).localCheckpoint(True)
+        __db_wipe(schema, table)
+        used = __db_create(both, schema, table, prov if prov in ("parquet", "orc") else fmt)
     elif mode in ("append", "merge") and exists:
         w = df.write.mode("append").option("mergeSchema", "true")
         loc = __db_table_loc(name) if prov == "delta" else None

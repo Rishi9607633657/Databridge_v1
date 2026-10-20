@@ -1,0 +1,440 @@
+version: 6.7.0
+type: DeclarativeSource
+
+check:
+  type: CheckStream
+  stream_names: [restaurants]
+
+definitions:
+  auth:
+    type: SessionTokenAuthenticator
+    login_requester:
+      type: HttpRequester
+      url_base: "{{ config.get('api_url') or config.get('api_host') or 'https://ws-api.toasttab.com' }}"
+      path: /authentication/v1/authentication/login
+      http_method: POST
+      authenticator:
+        type: NoAuth
+      request_headers:
+        Content-Type: application/json
+      request_body_json:
+        clientId: "{{ config['client_id'] }}"
+        clientSecret: "{{ config['client_secret'] }}"
+        userAccessType: TOAST_MACHINE_CLIENT
+    session_token_path: [token, accessToken]
+    expiration_duration: PT12H
+    request_authentication:
+      type: Bearer
+
+  requester:
+    type: HttpRequester
+    url_base: "{{ config.get('api_url') or config.get('api_host') or 'https://ws-api.toasttab.com' }}"
+    http_method: GET
+    authenticator:
+      $ref: "#/definitions/auth"
+    error_handler:
+      type: DefaultErrorHandler
+      max_retries: 8
+      backoff_strategies:
+        - type: ExponentialBackoffStrategy
+          factor: 3
+
+  restaurants_router:
+    type: ListPartitionRouter
+    values: "{{ config['restaurant_guids'] }}"
+    cursor_field: restaurant_guid
+    request_option:
+      type: RequestOption
+      inject_into: header
+      field_name: Toast-Restaurant-External-ID
+
+  add_location:
+    type: AddFields
+    fields:
+      - path: [location_id]
+        value: "{{ stream_slice['restaurant_guid'] }}"
+
+  array_selector:
+    type: RecordSelector
+    extractor:
+      type: DpathExtractor
+      field_path: []
+
+  page_token_paginator:
+    type: DefaultPaginator
+    pagination_strategy:
+      type: CursorPagination
+      cursor_value: "{{ headers.get('Toast-Next-Page-Token') or headers.get('toast-next-page-token') or '' }}"
+      stop_condition: "{{ not (headers.get('Toast-Next-Page-Token') or headers.get('toast-next-page-token')) }}"
+    page_token_option:
+      type: RequestOption
+      inject_into: request_parameter
+      field_name: pageToken
+
+  # history from start_date, then only records modified since the last run; windows end exclusive (+1 s)
+  modified_cursor:
+    type: DatetimeBasedCursor
+    cursor_field: modifiedDate
+    cursor_datetime_formats:
+      - "%Y-%m-%dT%H:%M:%S.%f%z"
+      - "%Y-%m-%dT%H:%M:%S%z"
+    datetime_format: "%Y-%m-%dT%H:%M:%S.000%z"
+    start_datetime:
+      type: MinMaxDatetime
+      datetime: "{{ config['start_date'] }}"
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+    end_datetime:
+      type: MinMaxDatetime
+      datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+    step: "P{{ [config.get('window_days', 7) | int, 30] | min }}D"
+    cursor_granularity: PT1S
+    lookback_window: "PT{{ config.get('lookback_minutes', 30) | int }}M"
+
+  config_stream:
+    type: DeclarativeStream
+    primary_key: [guid]
+    retriever:
+      type: SimpleRetriever
+      requester:
+        $ref: "#/definitions/requester"
+      record_selector:
+        $ref: "#/definitions/array_selector"
+      paginator:
+        $ref: "#/definitions/page_token_paginator"
+      partition_router:
+        $ref: "#/definitions/restaurants_router"
+    transformations:
+      - $ref: "#/definitions/add_location"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        additionalProperties: true
+        properties:
+          guid: {type: [string, "null"]}
+          name: {type: [string, "null"]}
+          location_id: {type: [string, "null"]}
+
+streams:
+  - type: DeclarativeStream
+    name: orders
+    primary_key: [guid]
+    retriever:
+      type: SimpleRetriever
+      requester:
+        $ref: "#/definitions/requester"
+        path: /orders/v2/ordersBulk
+        request_parameters:
+          endDate: "{{ format_datetime(str_to_datetime(stream_interval.end_time) + duration('PT1S'), '%Y-%m-%dT%H:%M:%S.000+0000') }}"
+      record_selector:
+        $ref: "#/definitions/array_selector"
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: PageIncrement
+          page_size: 100
+          start_from_page: 1
+          inject_on_first_request: true
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: page
+        page_size_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: pageSize
+      partition_router:
+        $ref: "#/definitions/restaurants_router"
+    incremental_sync:
+      $ref: "#/definitions/modified_cursor"
+      start_time_option:
+        type: RequestOption
+        inject_into: request_parameter
+        field_name: startDate
+    transformations:
+      - $ref: "#/definitions/add_location"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        additionalProperties: true
+        properties:
+          guid: {type: [string, "null"]}
+          location_id: {type: [string, "null"]}
+          businessDate: {type: [integer, "null"]}
+          openedDate: {type: [string, "null"], format: date-time}
+          modifiedDate: {type: [string, "null"], format: date-time}
+          closedDate: {type: [string, "null"], format: date-time}
+          paidDate: {type: [string, "null"], format: date-time}
+          voided: {type: [boolean, "null"]}
+          displayNumber: {type: [string, "null"]}
+          checks: {type: [array, "null"]}
+          revenueCenter: {type: [object, "null"]}
+          diningOption: {type: [object, "null"]}
+          server: {type: [object, "null"]}
+
+  - type: DeclarativeStream
+    name: time_entries
+    primary_key: [guid]
+    retriever:
+      type: SimpleRetriever
+      requester:
+        $ref: "#/definitions/requester"
+        path: /labor/v1/timeEntries
+        request_parameters:
+          modifiedEndDate: "{{ format_datetime(str_to_datetime(stream_interval.end_time) + duration('PT1S'), '%Y-%m-%dT%H:%M:%S.000+0000') }}"
+      record_selector:
+        $ref: "#/definitions/array_selector"
+      partition_router:
+        $ref: "#/definitions/restaurants_router"
+    incremental_sync:
+      $ref: "#/definitions/modified_cursor"
+      start_time_option:
+        type: RequestOption
+        inject_into: request_parameter
+        field_name: modifiedStartDate
+    transformations:
+      - $ref: "#/definitions/add_location"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        additionalProperties: true
+        properties:
+          guid: {type: [string, "null"]}
+          location_id: {type: [string, "null"]}
+          businessDate: {type: [string, "null"]}
+          inDate: {type: [string, "null"], format: date-time}
+          outDate: {type: [string, "null"], format: date-time}
+          modifiedDate: {type: [string, "null"], format: date-time}
+          regularHours: {type: [number, "null"]}
+          overtimeHours: {type: [number, "null"]}
+          hourlyWage: {type: [number, "null"]}
+          employeeReference: {type: [object, "null"]}
+          jobReference: {type: [object, "null"]}
+
+  - type: DeclarativeStream
+    name: employees
+    primary_key: [guid]
+    retriever:
+      type: SimpleRetriever
+      requester:
+        $ref: "#/definitions/requester"
+        path: /labor/v1/employees
+      record_selector:
+        $ref: "#/definitions/array_selector"
+      partition_router:
+        $ref: "#/definitions/restaurants_router"
+    transformations:
+      - $ref: "#/definitions/add_location"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        additionalProperties: true
+        properties:
+          guid: {type: [string, "null"]}
+          location_id: {type: [string, "null"]}
+          firstName: {type: [string, "null"]}
+          lastName: {type: [string, "null"]}
+          externalEmployeeId: {type: [string, "null"]}
+          deleted: {type: [boolean, "null"]}
+          modifiedDate: {type: [string, "null"]}
+
+  - type: DeclarativeStream
+    name: jobs
+    primary_key: [guid]
+    retriever:
+      type: SimpleRetriever
+      requester:
+        $ref: "#/definitions/requester"
+        path: /labor/v1/jobs
+      record_selector:
+        $ref: "#/definitions/array_selector"
+      partition_router:
+        $ref: "#/definitions/restaurants_router"
+    transformations:
+      - $ref: "#/definitions/add_location"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        additionalProperties: true
+        properties:
+          guid: {type: [string, "null"]}
+          location_id: {type: [string, "null"]}
+          title: {type: [string, "null"]}
+          defaultWage: {type: [number, "null"]}
+
+  - type: DeclarativeStream
+    name: restaurants
+    primary_key: [guid]
+    retriever:
+      type: SimpleRetriever
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/restaurants/v1/restaurants/{{ stream_partition['restaurant_guid'] }}"
+      record_selector:
+        $ref: "#/definitions/array_selector"
+      partition_router:
+        $ref: "#/definitions/restaurants_router"
+    transformations:
+      - $ref: "#/definitions/add_location"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        additionalProperties: true
+        properties:
+          guid: {type: [string, "null"]}
+          location_id: {type: [string, "null"]}
+          general: {type: [object, "null"]}
+          location: {type: [object, "null"]}
+
+  - type: DeclarativeStream
+    name: menus
+    primary_key: [location_id]
+    retriever:
+      type: SimpleRetriever
+      requester:
+        $ref: "#/definitions/requester"
+        path: /menus/v2/menus
+      record_selector:
+        $ref: "#/definitions/array_selector"
+      partition_router:
+        $ref: "#/definitions/restaurants_router"
+    transformations:
+      - $ref: "#/definitions/add_location"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        additionalProperties: true
+        properties:
+          restaurantGuid: {type: [string, "null"]}
+          location_id: {type: [string, "null"]}
+          lastUpdated: {type: [string, "null"]}
+          menus: {type: [array, "null"]}
+
+  - $ref: "#/definitions/config_stream"
+    name: revenue_centers
+    retriever:
+      $ref: "#/definitions/config_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: /config/v2/revenueCenters
+  - $ref: "#/definitions/config_stream"
+    name: dining_options
+    retriever:
+      $ref: "#/definitions/config_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: /config/v2/diningOptions
+  - $ref: "#/definitions/config_stream"
+    name: service_areas
+    retriever:
+      $ref: "#/definitions/config_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: /config/v2/serviceAreas
+  - $ref: "#/definitions/config_stream"
+    name: tables
+    retriever:
+      $ref: "#/definitions/config_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: /config/v2/tables
+  - $ref: "#/definitions/config_stream"
+    name: discounts
+    retriever:
+      $ref: "#/definitions/config_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: /config/v2/discounts
+  - $ref: "#/definitions/config_stream"
+    name: alternate_payment_types
+    retriever:
+      $ref: "#/definitions/config_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: /config/v2/alternatePaymentTypes
+  - $ref: "#/definitions/config_stream"
+    name: sales_categories
+    retriever:
+      $ref: "#/definitions/config_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: /config/v2/salesCategories
+  - $ref: "#/definitions/config_stream"
+    name: tax_rates
+    retriever:
+      $ref: "#/definitions/config_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: /config/v2/taxRates
+  - $ref: "#/definitions/config_stream"
+    name: void_reasons
+    retriever:
+      $ref: "#/definitions/config_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: /config/v2/voidReasons
+
+spec:
+  type: Spec
+  connection_specification:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    required: [client_id, client_secret, restaurant_guids, start_date]
+    additionalProperties: true
+    properties:
+      client_id:
+        type: string
+        title: Client ID
+        description: API client ID from Toast (Toast Web › Integrations › Toast API access, or your partner credentials).
+        order: 0
+      client_secret:
+        type: string
+        title: Client secret
+        airbyte_secret: true
+        order: 1
+      restaurant_guids:
+        type: array
+        items:
+          type: string
+        title: Restaurant GUIDs
+        description: One GUID per location, comma-separated. Every row gets a location_id column with the GUID it came from.
+        examples: ["d3b7a1c2-1234-4c4c-9e9e-0a1b2c3d4e5f"]
+        order: 2
+      start_date:
+        type: string
+        title: History from
+        description: First sync loads everything modified since this date (UTC); later syncs only load what changed since the last run.
+        format: date-time
+        pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        examples: ["2025-01-01T00:00:00Z"]
+        order: 3
+      api_host:
+        type: string
+        title: Environment
+        enum: ["https://ws-api.toasttab.com", "https://ws-sandbox-api.eng.toasttab.com"]
+        default: "https://ws-api.toasttab.com"
+        description: Production or sandbox API host.
+        order: 4
+      window_days:
+        type: integer
+        title: Days per request window
+        description: History is read in windows of this many days (1–30). Smaller windows for very busy locations.
+        default: 7
+        minimum: 1
+        maximum: 30
+        order: 5
+      lookback_minutes:
+        type: integer
+        title: Look-back (minutes)
+        description: Each incremental run re-reads this many minutes before the last change seen, to catch late updates. Upsert removes duplicates.
+        default: 30
+        minimum: 0
+        maximum: 1440
+        order: 6

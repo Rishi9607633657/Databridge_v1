@@ -1,0 +1,22 @@
+{
+  "name": "Restaurant365 (R365)",
+  "version": "1.0.0",
+  "order": 2,
+  "hosts": [
+    "odata.restaurant365.net"
+  ],
+  "description": "Restaurant365 OData \u2014 GL transactions and details, daily sales (employee, detail, payment), labor detail, deleted-records log and master data (locations, GL accounts, items, employees).",
+  "suggested": [
+    "transactions",
+    "transaction_details",
+    "sales_employee",
+    "sales_details",
+    "sales_payments",
+    "labor_details",
+    "locations",
+    "gl_accounts"
+  ],
+  "location": "R365 location",
+  "stage": "",
+  "category": "Restaurant, retail & hospitality"
+}

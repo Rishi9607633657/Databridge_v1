@@ -37,5 +37,11 @@ $code = $LASTEXITCODE
 Remove-Item $tmp -Recurse -Force
 if ($code -ge 8) { throw "Copy failed (robocopy code $code)" }
 
+# files removed from DataBridge in newer versions
+foreach ($old in @("backend\agent.py", "frontend\agent.js", "site\assets\dashboard.jpg", "site\assets\connectors.jpg", "site\assets\syncs.jpg", "site\assets\tenants.jpg")) {
+  $p = Join-Path $To $old
+  if (Test-Path $p) { Remove-Item $p -Force; Write-Host "  removed $old" }
+}
+
 pip install -r (Join-Path $To "requirements.txt") --quiet --disable-pip-version-check
-Write-Host "`nUpdated. Stop DataBridge (Ctrl+C), run .\run.bat, then press Ctrl+F5 in the browser." -ForegroundColor Green
+Write-Host "`nUpdated. Stop DataBridge (Ctrl+C), run .\run.bat, then refresh the browser." -ForegroundColor Green

@@ -1,0 +1,22 @@
+{
+  "name": "Toast",
+  "version": "1.0.0",
+  "order": 0,
+  "hosts": [
+    "ws-api.toasttab.com"
+  ],
+  "description": "Toast POS \u2014 orders with checks, items, payments and discounts; labor time entries, employees and jobs; menus, restaurants and configuration. Multi-location: one connection covers many restaurant GUIDs.",
+  "suggested": [
+    "orders",
+    "time_entries",
+    "employees",
+    "jobs",
+    "restaurants",
+    "menus",
+    "revenue_centers",
+    "dining_options"
+  ],
+  "location": "Restaurant GUID",
+  "stage": "",
+  "category": "Restaurant, retail & hospitality"
+}

@@ -1,0 +1,21 @@
+{
+  "name": "Clover",
+  "version": "1.0.0",
+  "order": 1,
+  "hosts": [
+    "api.clover.com"
+  ],
+  "description": "Clover POS \u2014 orders with line items, payments, refunds, items, categories, employees, customers and tenders for one merchant.",
+  "suggested": [
+    "orders",
+    "payments",
+    "refunds",
+    "items",
+    "categories",
+    "employees",
+    "merchant"
+  ],
+  "location": "Merchant ID",
+  "stage": "",
+  "category": "Restaurant, retail & hospitality"
+}

@@ -1,0 +1,219 @@
+version: 6.7.0
+type: DeclarativeSource
+
+check:
+  type: CheckStream
+  stream_names: [establishments]
+
+definitions:
+  requester:
+    type: HttpRequester
+    url_base: "{{ config.get('api_url') or ('https://' ~ config['subdomain'] ~ '.revelup.com') }}"
+    http_method: GET
+    authenticator:
+      type: ApiKeyAuthenticator
+      api_token: "{{ config['api_key'] }}:{{ config['api_secret'] }}"
+      inject_into:
+        type: RequestOption
+        inject_into: header
+        field_name: API-AUTHENTICATION
+    error_handler:
+      type: DefaultErrorHandler
+      max_retries: 8
+      backoff_strategies:
+        - type: ExponentialBackoffStrategy
+          factor: 5
+
+  objects_selector:
+    type: RecordSelector
+    extractor:
+      type: DpathExtractor
+      field_path: [objects]
+
+  # follow meta.next (it already carries the filters and the next offset)
+  next_paginator:
+    type: DefaultPaginator
+    pagination_strategy:
+      type: CursorPagination
+      cursor_value: "{{ response.get('meta', {}).get('next') or '' }}"
+      stop_condition: "{{ not response.get('meta', {}).get('next') }}"
+    page_token_option:
+      type: RequestPath
+
+  add_location:
+    type: AddFields
+    fields:
+      - path: [location_id]
+        value: "{{ record.get('establishment') or record.get('resource_uri') }}"
+
+  updated_cursor:
+    type: DatetimeBasedCursor
+    cursor_field: updated_date
+    cursor_datetime_formats: ["%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z"]
+    datetime_format: "%Y-%m-%dT%H:%M:%S"
+    start_datetime:
+      type: MinMaxDatetime
+      datetime: "{{ config['start_date'] }}"
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+    end_datetime:
+      type: MinMaxDatetime
+      datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+    step: "P{{ [config.get('window_days', 7) | int, 31] | min }}D"
+    cursor_granularity: PT1S
+    lookback_window: "PT{{ config.get('lookback_hours', 24) | int }}H"
+
+  inc_stream:
+    type: DeclarativeStream
+    primary_key: [id]
+    retriever:
+      type: SimpleRetriever
+      requester:
+        $ref: "#/definitions/requester"
+      record_selector:
+        $ref: "#/definitions/objects_selector"
+      paginator:
+        $ref: "#/definitions/next_paginator"
+    incremental_sync:
+      $ref: "#/definitions/updated_cursor"
+    transformations:
+      - $ref: "#/definitions/add_location"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        additionalProperties: true
+        properties:
+          id: {type: [integer, "null"]}
+          location_id: {type: [string, "null"]}
+          created_date: {type: [string, "null"]}
+          updated_date: {type: [string, "null"]}
+
+  full_stream:
+    type: DeclarativeStream
+    primary_key: [id]
+    retriever:
+      type: SimpleRetriever
+      requester:
+        $ref: "#/definitions/requester"
+      record_selector:
+        $ref: "#/definitions/objects_selector"
+      paginator:
+        $ref: "#/definitions/next_paginator"
+    transformations:
+      - $ref: "#/definitions/add_location"
+    schema_loader:
+      $ref: "#/definitions/inc_stream/schema_loader"
+
+streams:
+  - $ref: "#/definitions/inc_stream"
+    name: orders
+    retriever:
+      $ref: "#/definitions/inc_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/resources/Order/?format=json&limit=200&order_by=updated_date&updated_date__gte={{ stream_interval.start_time }}&updated_date__lt={{ format_datetime(str_to_datetime(stream_interval.end_time) + duration('PT1S'), '%Y-%m-%dT%H:%M:%S') }}"
+  - $ref: "#/definitions/inc_stream"
+    name: order_items
+    retriever:
+      $ref: "#/definitions/inc_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/resources/OrderItem/?format=json&limit=200&order_by=updated_date&updated_date__gte={{ stream_interval.start_time }}&updated_date__lt={{ format_datetime(str_to_datetime(stream_interval.end_time) + duration('PT1S'), '%Y-%m-%dT%H:%M:%S') }}"
+  - $ref: "#/definitions/inc_stream"
+    name: payments
+    retriever:
+      $ref: "#/definitions/inc_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/resources/Payment/?format=json&limit=200&order_by=updated_date&updated_date__gte={{ stream_interval.start_time }}&updated_date__lt={{ format_datetime(str_to_datetime(stream_interval.end_time) + duration('PT1S'), '%Y-%m-%dT%H:%M:%S') }}"
+  - $ref: "#/definitions/inc_stream"
+    name: time_sheet_entries
+    retriever:
+      $ref: "#/definitions/inc_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/resources/TimeSheetEntry/?format=json&limit=200&order_by=updated_date&updated_date__gte={{ stream_interval.start_time }}&updated_date__lt={{ format_datetime(str_to_datetime(stream_interval.end_time) + duration('PT1S'), '%Y-%m-%dT%H:%M:%S') }}"
+  - $ref: "#/definitions/full_stream"
+    name: products
+    retriever:
+      $ref: "#/definitions/full_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/resources/Product/?format=json&limit=200"
+  - $ref: "#/definitions/full_stream"
+    name: product_categories
+    retriever:
+      $ref: "#/definitions/full_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/resources/ProductCategory/?format=json&limit=200"
+  - $ref: "#/definitions/full_stream"
+    name: employees
+    retriever:
+      $ref: "#/definitions/full_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/resources/Employee/?format=json&limit=200"
+  - $ref: "#/definitions/full_stream"
+    name: customers
+    retriever:
+      $ref: "#/definitions/full_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/resources/Customer/?format=json&limit=200"
+  - $ref: "#/definitions/full_stream"
+    name: establishments
+    retriever:
+      $ref: "#/definitions/full_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "/resources/Establishment/?format=json&limit=200"
+
+spec:
+  type: Spec
+  connection_specification:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    required: [subdomain, api_key, api_secret, start_date]
+    additionalProperties: true
+    properties:
+      subdomain:
+        type: string
+        title: Revel subdomain
+        description: For https://yourcompany.revelup.com enter yourcompany.
+        examples: ["yourcompany"]
+        order: 0
+      api_key:
+        type: string
+        title: API key
+        airbyte_secret: true
+        order: 1
+      api_secret:
+        type: string
+        title: API secret
+        airbyte_secret: true
+        order: 2
+      start_date:
+        type: string
+        title: History from
+        description: First sync loads records updated since this date; later syncs only load what changed since the last run.
+        format: date-time
+        pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        examples: ["2025-01-01T00:00:00Z"]
+        order: 3
+      window_days:
+        type: integer
+        title: Days per request window
+        default: 7
+        minimum: 1
+        maximum: 31
+        order: 4
+      lookback_hours:
+        type: integer
+        title: Look-back (hours)
+        description: Revel times are in the establishment's local time; re-reading a day covers time-zone differences. Upsert removes duplicates.
+        default: 24
+        minimum: 0
+        maximum: 168
+        order: 5

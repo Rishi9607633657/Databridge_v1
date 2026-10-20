@@ -1,0 +1,61 @@
+# DataBridge Helm values. The cloud scripts (deploy/azure, deploy/aws, deploy/oracle) set the important ones for you.
+
+image:
+  repository: databridge          # e.g. myacr.azurecr.io/databridge
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+imagePullSecrets: []              # e.g. [{name: ocir-secret}] for Oracle OCIR
+
+
+# Sign-in is always on. The first person to open DataBridge creates the admin account, so open it once
+# through "kubectl port-forward" (the scripts print the command) BEFORE you turn on the public ingress.
+
+# Extra environment for DataBridge (plain values). Secrets go in extraSecretEnv.
+# Values set here are fixed; anything you leave out can be changed in Admin › Settings (saved on the shared disk).
+env:
+  SPARK_TIMEZONE: "Asia/Kolkata"
+extraSecretEnv: {}                # stored in the Secret "<release>-env"; e.g. {ADLS_KEY: "...", S3_ACCESS_KEY: "...", S3_SECRET_KEY: "..."}
+
+resources:                        # the DataBridge pod = web server + every notebook's Spark driver
+  requests: {cpu: "2", memory: 8Gi}
+  limits: {memory: 14Gi}
+nodeSelector: {}                  # e.g. {databridge.io/pool: system}
+tolerations: []
+
+# Shared disk: notebooks, local Delta tables (workspace/spark-warehouse), users/settings (.stratum), jars.
+# Must be ReadWriteMany so Spark executor pods can read/write the same tables.
+#   AKS: azurefile-csi   EKS: efs-sc (EFS CSI driver)   OKE: a File Storage (FSS) class
+storage:
+  existingClaim: ""
+  storageClass: ""
+  accessMode: ReadWriteMany
+  size: 100Gi
+
+# Hive metastore database (table catalog). Built-in Postgres, or point to a managed one.
+metastore:
+  builtin: true
+  storageClass: ""                # ReadWriteOnce disk, e.g. managed-csi (AKS), gp3 (EKS), oci-bv (OKE)
+  size: 10Gi
+  password: ""                    # generated when empty
+  external:                       # also put METASTORE_DSN=postgresql://user:pw@host:5432/hive_metastore in extraSecretEnv
+    jdbcUrl: ""                   # jdbc:postgresql://host:5432/hive_metastore?sslmode=require
+    user: ""
+    password: ""
+
+# Spark on Kubernetes — executors for named clusters (Compute › Clusters) are pods in this namespace
+spark:
+  executorImage: ""               # empty = the DataBridge image (recommended)
+  serviceAccount: databridge-spark
+  nodeLabel: databridge.io/pool   # node pools carry databridge.io/pool=<pool> (and <pool>-spot)
+  extraPackages: ""               # e.g. org.apache.hadoop:hadoop-aws:3.3.4 for s3a:// (S3, OCI Object Storage)
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""                   # nginx / azure-application-gateway / alb
+  host: ""
+  annotations: {}
+  tls: []                         # [{secretName: databridge-tls, hosts: [analytics.example.com]}]

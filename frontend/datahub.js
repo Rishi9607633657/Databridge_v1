@@ -1,7 +1,7 @@
 /* DataBridge Data Hub — Import file (CSV / Excel -> Delta) and Connectors (Airbyte, in DataBridge's own UI). Loaded before app.js. */
 'use strict';
 
-const DH_TABS = [['import', 'Import file', 'data_hub'], ['connections', 'Connections', 'data_hub'], ['syncs', 'Syncs', 'data_hub'], ['catalog', 'Connector catalog (600+)', 'data_hub'], ['history', 'Import history', 'data_hub']];
+const DH_TABS = [['import', 'Import file', 'data_hub'], ['connections', 'Connections', 'data_hub'], ['syncs', 'Syncs', 'data_hub'], ['tenants', 'Tenants', 'data_hub'], ['catalog', 'Connectors (580+)', 'data_hub'], ['history', 'Import history', 'data_hub']];
 
 async function viewDataHub(main, r) {
   const tabs = DH_TABS.filter(([, , f]) => dbFeat(f));
@@ -15,6 +15,7 @@ async function viewDataHub(main, r) {
   const body = el('div', { class: 'dh' });
   main.append(body);
   if (tab === 'catalog') return dhCatalog(body);
+  if (tab === 'tenants') return dhTenants(body);
   if (tab === 'connectors' || tab === 'airbyte-server') return dhConnectors(body);   // optional external Airbyte server
   if (tab === 'connections') return dhConnections(body);
   if (tab === 'syncs') return dhSyncs(body);
@@ -380,6 +381,40 @@ function abGallery(kind, list, offline, pick, logoFn) {
     el('div', { class: 'row', style: { gap: '10px', alignItems: 'center' } }, el('div', { class: 'grow' }, search), count), chips, grid);
 }
 
+/* Dates in connector specs: show a date (and time) picker and send exactly the format the connector's pattern wants
+   (2021-03-01T00:00:00Z, 2021-03-01T00:00:00.000Z, 2021-03-01, 2021-03 …) — people never type the format by hand. */
+const AB_DATE_RE = /\[0-9\]\{4\}-\[0-9\]\{2\}/;
+function abIsDateField(p) {
+  const t = Array.isArray(p.type) ? p.type.find((x) => x !== 'null') : p.type;
+  return t === 'string' && !p.enum && (p.format === 'date-time' || p.format === 'date' || AB_DATE_RE.test(p.pattern || ''));
+}
+function abDateField(title, p, required, dv, errs, help) {
+  const pat = p.pattern || '';
+  const monthOnly = /^\^?\[0-9\]\{4\}-\[0-9\]\{2\}\$?$/.test(pat);
+  const withTime = !monthOnly && (p.format === 'date-time' || /T|:\[0-9\]|\s\[0-9\]\{2\}:/.test(pat.replace(/^\^?\[0-9\]\{4\}-\[0-9\]\{2\}-\[0-9\]\{2\}/, '')));
+  const cur = String(dv ?? (p.examples ? [].concat(p.examples)[0] : '') ?? '');
+  const m = /^(\d{4}-\d{2}(?:-\d{2})?)(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/.exec(dv != null ? String(dv) : '');
+  const date = el('input', { class: 'field', type: monthOnly ? 'month' : 'date', value: m ? m[1] : '', 'aria-label': title });
+  const time = withTime ? el('input', { class: 'field', type: 'time', step: '1', value: m && m[2] ? (m[2].length === 5 ? `${m[2]}:00` : m[2]) : '00:00:00', 'aria-label': `${title} time` }) : null;
+  const tz = withTime ? el('span', { class: 'muted small' }, 'UTC') : null;
+  const preview = el('div', { class: 'ab-help mono' });
+  let re = null;
+  try { re = pat ? new RegExp(pat) : null; } catch { re = null; }
+  const value = () => {
+    if (!date.value) return undefined;
+    if (monthOnly) return date.value.slice(0, 7);
+    const d = date.value;
+    const t = time && time.value ? (time.value.length === 5 ? `${time.value}:00` : time.value) : '00:00:00';
+    const cands = withTime ? [`${d}T${t}Z`, `${d}T${t}.000Z`, `${d}T${t}`, `${d} ${t}`, `${d}T${t}+00:00`, d] : [d, `${d}T${t}Z`];
+    return (re && cands.find((c) => re.test(c))) || (p.format === 'date' ? d : cands[0]);
+  };
+  const show = () => { const v = value(); preview.textContent = v ? `Sent as ${v}` : (cur ? `e.g. ${cur}` : ''); };
+  date.addEventListener('input', show); if (time) time.addEventListener('input', show); show();
+  const node = el('div', { class: 'lbl ab-field' }, el('span', {}, title, required ? el('span', { class: 'req' }, '*') : null),
+    el('div', { class: 'ab-date' }, date, time, tz), preview, help(p));
+  return { node, get: () => { const v = value(); if (required && !v) errs.push(`${title} is required`); return v; } };
+}
+
 /* Step 2: a form generated from the connector's JSON-schema spec */
 function abSpecForm(schema, values) {
   const errs = [];
@@ -420,11 +455,21 @@ function abSpecForm(schema, values) {
     } else if (t === 'object') {
       input = el('textarea', { class: 'field mono', rows: 4, spellcheck: 'false', placeholder: '{ }' }, dv ? JSON.stringify(dv, null, 2) : '');
       get = () => { const v = input.value.trim(); if (!v) return undefined; try { return JSON.parse(v); } catch { errs.push(`${title}: not valid JSON`); return undefined; } };
+    } else if (abIsDateField(p)) {
+      return abDateField(title, p, required, dv, errs, help);
     } else {
-      const secret = p.airbyte_secret;
+      const secret = p.airbyte_secret || p.x_secret;
       input = p.multiline ? el('textarea', { class: 'field mono', rows: 4, spellcheck: 'false', placeholder: p.examples ? String(p.examples[0]) : '' }, dv ?? '')
         : el('input', { class: 'field', type: secret ? 'password' : 'text', value: dv ?? '', autocomplete: secret ? 'new-password' : 'off', placeholder: p.examples ? String(p.examples[0]) : (p.pattern_descriptor || '') });
-      get = () => (input.value === '' ? undefined : input.value);
+      get = () => {
+        if (input.value === '') return undefined;
+        if (p.pattern && !p.airbyte_secret && !p.x_secret) {
+          let re = null;
+          try { re = new RegExp(p.pattern); } catch { /* JS can't parse this pattern: skip */ }
+          if (re && !re.test(input.value)) errs.push(`${title}: expected ${p.pattern_descriptor || (p.examples ? `e.g. ${[].concat(p.examples)[0]}` : p.pattern)}`);
+        }
+        return input.value;
+      };
     }
     const wrap = el('label', { class: 'lbl ab-field' }, el('span', {}, title, required ? el('span', { class: 'req' }, '*') : null), input, help(p));
     return { node: wrap, get: () => { const v = get(); if (required && (v === undefined || v === '')) errs.push(`${title} is required`); return v; } };
@@ -449,7 +494,7 @@ function abSpecForm(schema, values) {
     const props = sch.properties || {};
     const req = new Set(sch.required || []);
     const v0 = vals && typeof vals === 'object' ? vals : {};
-    const keys = Object.keys(props).filter((k) => !props[k].airbyte_hidden)
+    const keys = Object.keys(props).filter((k) => !props[k].airbyte_hidden && !props[k].x_hidden)
       .sort((a, b) => ((props[a].order ?? 999) - (props[b].order ?? 999)) || (req.has(b) - req.has(a)));
     const items = keys.map((k) => [k, field(k, props[k], req.has(k), path, v0[k])]);
     const main = el('div', { class: 'ab-fields' }); const opt = el('div', { class: 'ab-fields' });

@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "db.name" . }}
+  labels: {{- include "db.labels" . | nindent 4 }}
+spec:
+  replicas: 1                     # notebook kernels live in this pod; scale compute with clusters, not replicas
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: databridge, app.kubernetes.io/instance: {{ .Release.Name }}}
+  template:
+    metadata:
+      labels: {{- include "db.labels" . | nindent 8 }}
+      annotations:
+        checksum/env: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ .Values.spark.serviceAccount }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {fsGroup: 0}
+      containers:
+        - name: databridge
+          image: {{ include "db.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - {name: http, containerPort: 8800}
+          env:
+            - {name: POD_IP, valueFrom: {fieldRef: {fieldPath: status.podIP}}}
+            - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+            - {name: POD_NAMESPACE, valueFrom: {fieldRef: {fieldPath: metadata.namespace}}}
+            - {name: AUTH_ENABLED, value: "true"}
+            - {name: FORWARDED_ALLOW_IPS, value: "*"}
+            - {name: SPARK_NAMESPACE, value: {{ .Release.Namespace | quote }}}
+            - {name: SPARK_SERVICE_ACCOUNT, value: {{ .Values.spark.serviceAccount | quote }}}
+            - {name: SPARK_NODE_LABEL, value: {{ .Values.spark.nodeLabel | quote }}}
+            - {name: DATABRIDGE_IMAGE, value: {{ include "db.image" . | quote }}}
+            - {name: SPARK_EXECUTOR_IMAGE, value: {{ .Values.spark.executorImage | default (include "db.image" .) | quote }}}
+            - {name: SPARK_IMAGE_PULL_POLICY, value: {{ .Values.image.pullPolicy | quote }}}
+            {{- with .Values.imagePullSecrets }}
+            - {name: SPARK_IMAGE_PULL_SECRETS, value: "{{ range $i, $s := . }}{{ if $i }},{{ end }}{{ $s.name }}{{ end }}"}
+            {{- end }}
+            - {name: SPARK_SHARED_PVC, value: {{ include "db.claim" . | quote }}}
+            - {name: SPARK_SHARED_MOUNT, value: /app/workspace}
+            - {name: SPARK_SHARED_SUBPATH, value: workspace}
+            {{- with .Values.spark.extraPackages }}
+            - {name: SPARK_EXTRA_PACKAGES, value: {{ . | quote }}}
+            {{- end }}
+            {{- if or .Values.metastore.builtin .Values.metastore.external.jdbcUrl }}
+            - {name: CATALOG_BACKEND, value: metastore}
+            {{- end }}
+            {{- range $k, $v := .Values.env }}
+            - {name: {{ $k }}, value: {{ $v | quote }}}
+            {{- end }}
+          envFrom:
+            - secretRef: {name: {{ include "db.name" . }}-env}
+          volumeMounts:
+            - {name: data, mountPath: /app/workspace, subPath: workspace}
+            - {name: data, mountPath: /app/.stratum, subPath: stratum}
+            - {name: data, mountPath: /app/jars, subPath: jars}
+            - {name: data, mountPath: /root/.ivy2, subPath: ivy2}     # Spark / Delta jars, downloaded once
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          startupProbe:
+            httpGet: {path: /, port: http}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /, port: http}
+            periodSeconds: 15
+          livenessProbe:
+            httpGet: {path: /, port: http}
+            periodSeconds: 30
+            failureThreshold: 6
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: {{ include "db.claim" . }}}

@@ -235,14 +235,14 @@ async def _registry():
             async with httpx.AsyncClient(timeout=90, follow_redirects=True) as c:
                 r = await c.get(_REG_URL)
             r.raise_for_status()
-            data = r.json()
+            data = await _asyncio.to_thread(r.json)            # tens of MB: parse off the event loop
             _REG_FILE.parent.mkdir(parents=True, exist_ok=True)
-            _REG_FILE.write_text(_json.dumps(data), encoding="utf-8")
+            await _asyncio.to_thread(lambda: _REG_FILE.write_text(_json.dumps(data), encoding="utf-8"))
         except Exception:  # noqa: BLE001 - offline: fall back to the cached copy
             data = None
     if data is None and _REG_FILE.exists():
         try:
-            data = _json.loads(_REG_FILE.read_text(encoding="utf-8"))
+            data = await _asyncio.to_thread(lambda: _json.loads(_REG_FILE.read_text(encoding="utf-8")))
         except ValueError:
             data = None
     if data is None:            # never downloaded and offline: the curated templates only

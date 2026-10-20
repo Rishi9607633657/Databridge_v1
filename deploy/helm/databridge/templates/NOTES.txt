@@ -1,0 +1,10 @@
+DataBridge is starting (first start downloads Spark/Delta jars: 2-4 minutes).
+
+1. Create the admin account BEFORE exposing it publicly:
+     kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "db.name" . }} 8800:{{ .Values.service.port }}
+   then open http://localhost:8800 and sign up (the first user becomes the admin).
+
+2. Compute › Clusters › New cluster: pick the cloud, worker size, min/max workers, auto-stop and price.
+   Executors run as pods on nodes labelled {{ .Values.spark.nodeLabel }}=<node pool>.
+
+3. Usage and cost: Compute › Usage and cost (admins), Download CSV for billing.

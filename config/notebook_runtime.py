@@ -915,3 +915,68 @@ try:
         _db_shell.events.register("post_run_cell", _db_spark_progress.post)
 except Exception:  # noqa: BLE001
     pass
+
+
+# ---------------------------------------------------------------- reliable overwrite (Databricks-style)
+# df.write.mode("overwrite")[.option("overwriteSchema", "true")].saveAsTable("db.t") must always replace the table.
+# Plain Spark refuses when the existing table can't be overwritten in place, e.g. it is a Hive/Parquet table and the
+# session writes Delta ("Table t does not support truncate in batch mode", "format ... doesn't match", "not a Delta
+# table"), or a leftover folder blocks a managed table (LOCATION_ALREADY_EXISTS). On overwrite we then drop the old
+# table entry and write it again — at the same location for external tables. Appends are never touched.
+_DB_OVERWRITE_RETRY = ("does not support truncate", "LOCATION_ALREADY_EXISTS", "doesn't match the specified format",
+                       "does not match the specified format", "is not a Delta table", "DELTA_TABLE_NOT_FOUND",
+                       "DELTA_FORMAT_MISMATCH", "DELTA_NOT_A_DELTA_TABLE", "_LEGACY_ERROR_TEMP_1159",
+                       "Cannot overwrite a path that is also being read from")
+try:
+    from pyspark.sql.readwriter import DataFrameWriter as _DbWriter
+
+    if not getattr(_DbWriter, "_databridge_patched", False):
+        _db_orig_mode, _db_orig_save_as = _DbWriter.mode, _DbWriter.saveAsTable
+
+        def _db_mode(self, saveMode):
+            self._db_mode = str(saveMode or "").lower()
+            return _db_orig_mode(self, saveMode)
+
+        def _db_table_info(spark, name):
+            info = {}
+            try:
+                for r in spark.sql(f"DESCRIBE TABLE EXTENDED {name}").collect():
+                    k = (r[0] or "").strip().lower()
+                    if k in ("type", "location", "provider"):
+                        info[k] = (r[1] or "").strip()
+            except Exception:  # noqa: BLE001
+                pass
+            return info
+
+        def _db_save_as_table(self, name, format=None, mode=None, partitionBy=None, **options):
+            m = str(mode or getattr(self, "_db_mode", "") or "").lower()
+            try:
+                return _db_orig_save_as(self, name, format, mode, partitionBy, **options)
+            except Exception as e:  # noqa: BLE001
+                msg = str(e)
+                if m != "overwrite":
+                    raise
+                if "METADATA_MISMATCH" in msg or "schema mismatch" in msg.lower():
+                    self.option("overwriteSchema", "true")            # Delta table, new columns/types: replace the schema
+                    return _db_orig_save_as(self, name, format, "overwrite", partitionBy, **options)
+                if not any(t in msg for t in _DB_OVERWRITE_RETRY):
+                    raise
+                spark = self._spark if hasattr(self, "_spark") else self._df.sparkSession
+                info = _db_table_info(spark, name)
+                print(f"DataBridge: replacing table {name} ({info.get('provider') or 'unknown format'}) — "
+                      f"Spark could not overwrite it in place: {msg.splitlines()[0][:160]}")
+                spark.sql(f"DROP TABLE IF EXISTS {name}")
+                if (info.get("type") or "").upper() == "EXTERNAL" and info.get("location"):
+                    self.option("path", info["location"])        # keep the data where it was
+                self.option("overwriteSchema", "true")
+                return _db_orig_save_as(self, name, format, "overwrite", partitionBy, **options)
+
+        _DbWriter.mode = _db_mode
+        _DbWriter.saveAsTable = _db_save_as_table
+        _DbWriter._databridge_patched = True
+except Exception:  # noqa: BLE001
+    pass
+try:   # let a managed table be re-created over a leftover folder (spark_init.py is user-owned, so set it here too)
+    _db_builtins.spark.conf.set("spark.sql.legacy.allowNonEmptyLocationInCTAS", "true")
+except Exception:  # noqa: BLE001
+    pass

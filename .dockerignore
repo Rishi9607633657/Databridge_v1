@@ -1,0 +1,17 @@
+# keep the image small and free of data / secrets
+.stratum
+workspace
+jars
+secrets
+.venv
+venv
+.env
+.env.*
+deploy
+build
+dist
+packaging
+*.log
+**/__pycache__
+**/*.pyc
+.git

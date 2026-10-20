@@ -9,45 +9,94 @@ const ROLE_HELP = { admin: 'Everything, including users, settings and connection
 /* Called by boot(). Resolves once a user is signed in (or auth is off). */
 async function authGate() {
   try { AUTH_INFO = await (await fetch('/api/auth/me')).json(); } catch { AUTH_INFO = { auth_enabled: false }; }
+  if (window.DBSkin && AUTH_INFO.skin) DBSkin.server(AUTH_INFO.skin);
   if (AUTH_INFO.user) { CURRENT_USER = AUTH_INFO.user; return; }
   await new Promise((resolve) => authScreen(AUTH_INFO.needs_setup ? 'setup' : 'login', resolve));
 }
 
 function authScreen(mode, done) {
-  const user = el('input', { class: 'field', autocomplete: 'username', placeholder: mode === 'setup' ? 'e.g. rishi' : '' });
-  const name = el('input', { class: 'field', autocomplete: 'name' });
-  const pw = el('input', { class: 'field', type: 'password', autocomplete: mode === 'setup' ? 'new-password' : 'current-password' });
-  const pw2 = el('input', { class: 'field', type: 'password', autocomplete: 'new-password' });
-  const err = el('div', { class: 'auth-err', role: 'alert' });
-  const submit = el('button', { type: 'submit', class: 'btn primary auth-submit' }, mode === 'setup' ? 'Create admin account' : 'Sign in');
-  const form = el('form', { class: 'auth-card' },
-    el('img', { src: '/static/logo-full.png', alt: 'DataBridge', class: 'auth-logo' }),
-    el('h1', {}, mode === 'setup' ? 'Welcome — create the admin account' : 'Sign in'),
-    mode === 'setup' ? el('p', { class: 'muted' }, 'This is the first sign-in on this DataBridge. The account you create here can add other users.') : null,
-    el('label', { class: 'lbl' }, 'Username', user),
-    mode === 'setup' ? el('label', { class: 'lbl' }, 'Full name', name) : null,
-    el('label', { class: 'lbl' }, 'Password', pw),
-    mode === 'setup' ? el('label', { class: 'lbl' }, 'Repeat password', pw2) : null,
-    mode === 'setup' ? el('p', { class: 'pl-hint' }, 'At least 8 characters, with letters and numbers.') : null,
-    err, submit);
-  const overlay = el('div', { class: 'auth-overlay' }, form);
+  const signupOn = !!(AUTH_INFO.signup && AUTH_INFO.signup.enabled);
+  const overlay = el('div', { class: 'auth-overlay' });
   document.body.append(overlay);
-  setTimeout(() => user.focus(), 0);
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    err.textContent = '';
-    if (mode === 'setup' && pw.value !== pw2.value) { err.textContent = 'Passwords do not match'; return; }
-    submit.disabled = true;
-    try {
-      const r = await fetch(mode === 'setup' ? '/api/auth/setup' : '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: user.value.trim(), name: name.value.trim(), password: pw.value }) });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.detail || 'Sign-in failed');
-      CURRENT_USER = data.user;
-      overlay.remove();
-      done();
-    } catch (ex) { err.textContent = ex.message; submit.disabled = false; pw.select(); }
-  });
+  const swap = (m) => { overlay.remove(); authScreen(m, done); };
+  const err = el('div', { class: 'auth-err', role: 'alert' });
+  const fieldEl = (attrs) => el('input', { class: 'field', ...attrs });
+  let form;
+  if (mode === 'signup') {
+    const name = fieldEl({ autocomplete: 'name', required: true });
+    const email = fieldEl({ type: 'email', autocomplete: 'email', required: true, placeholder: 'you@company.com' });
+    const company = fieldEl({ autocomplete: 'organization', placeholder: 'Restaurant / company name' });
+    const pw = fieldEl({ type: 'password', autocomplete: 'new-password', required: true });
+    const pw2 = fieldEl({ type: 'password', autocomplete: 'new-password', required: true });
+    const trap = el('input', { name: 'website', tabindex: '-1', autocomplete: 'off', class: 'auth-trap', 'aria-hidden': 'true' });
+    const submit = el('button', { type: 'submit', class: 'btn primary auth-submit' }, 'Create account');
+    form = el('form', { class: 'auth-card' },
+      el('img', { src: '/static/logo-full.png', alt: 'DataBridge', class: 'auth-logo' }),
+      el('h1', {}, 'Create your account'),
+      el('p', { class: 'muted' }, AUTH_INFO.signup.approval ? 'An admin approves new accounts — you’ll be able to sign in once it’s done.' : 'Start in a minute — no card needed.'),
+      el('label', { class: 'lbl' }, 'Full name', name), el('label', { class: 'lbl' }, 'Work email', email),
+      el('label', { class: 'lbl' }, 'Company', company),
+      el('div', { class: 'auth-two' }, el('label', { class: 'lbl' }, 'Password', pw), el('label', { class: 'lbl' }, 'Repeat password', pw2)),
+      el('p', { class: 'pl-hint' }, 'At least 8 characters, with letters and numbers.'), trap,
+      err, submit,
+      el('p', { class: 'auth-alt' }, 'Already have an account? ', el('a', { href: '#', onClick: (e) => { e.preventDefault(); swap('login'); } }, 'Sign in')));
+    setTimeout(() => name.focus(), 0);
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault(); err.textContent = '';
+      if (pw.value !== pw2.value) { err.textContent = 'Passwords do not match'; return; }
+      submit.disabled = true;
+      try {
+        const r = await fetch('/api/auth/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: name.value.trim(), email: email.value.trim(), company: company.value.trim(), password: pw.value, website: trap.value }) });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || 'Sign-up failed');
+        if (data.user) { CURRENT_USER = data.user; overlay.remove(); done(); return; }
+        form.replaceChildren(el('img', { src: '/static/logo-full.png', alt: 'DataBridge', class: 'auth-logo' }),
+          el('div', { class: 'auth-done', 'aria-hidden': 'true' }, '✓'),
+          el('h1', {}, 'Thanks — you’re on the list'),
+          el('p', { class: 'muted' }, `We’ve received the request for ${email.value.trim()}. An admin will approve it shortly; then sign in with your email and password.`),
+          el('button', { type: 'button', class: 'btn primary auth-submit', onClick: () => swap('login') }, 'Back to sign in'));
+      } catch (ex) { err.textContent = ex.message; submit.disabled = false; }
+    });
+  } else {
+    const user = fieldEl({ autocomplete: 'username', placeholder: mode === 'setup' ? 'e.g. rishi' : (signupOn ? 'username or email' : '') });
+    const name = fieldEl({ autocomplete: 'name' });
+    const pw = fieldEl({ type: 'password', autocomplete: mode === 'setup' ? 'new-password' : 'current-password' });
+    const pw2 = fieldEl({ type: 'password', autocomplete: 'new-password' });
+    const submit = el('button', { type: 'submit', class: 'btn primary auth-submit' }, mode === 'setup' ? 'Create admin account' : 'Sign in');
+    form = el('form', { class: 'auth-card' }, ...[
+      el('img', { src: '/static/logo-full.png', alt: 'DataBridge', class: 'auth-logo' }),
+      el('h1', {}, mode === 'setup' ? 'Welcome — create the admin account' : 'Sign in'),
+      mode === 'setup' ? el('p', { class: 'muted' }, 'This is the first sign-in on this DataBridge. The account you create here can add other users.') : null,
+      el('label', { class: 'lbl' }, mode === 'setup' ? 'Username' : 'Username or email', user),
+      mode === 'setup' ? el('label', { class: 'lbl' }, 'Full name', name) : null,
+      el('label', { class: 'lbl' }, 'Password', pw),
+      mode === 'setup' ? el('label', { class: 'lbl' }, 'Repeat password', pw2) : null,
+      mode === 'setup' ? el('p', { class: 'pl-hint' }, 'At least 8 characters, with letters and numbers.') : null,
+      err, submit,
+      mode === 'login' && signupOn ? el('p', { class: 'auth-alt' }, 'New to DataBridge? ', el('a', { href: '#', onClick: (e) => { e.preventDefault(); swap('signup'); } }, 'Create an account')) : null,
+    ].filter(Boolean));
+    setTimeout(() => user.focus(), 0);
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.textContent = '';
+      if (mode === 'setup' && pw.value !== pw2.value) { err.textContent = 'Passwords do not match'; return; }
+      submit.disabled = true;
+      try {
+        const r = await fetch(mode === 'setup' ? '/api/auth/setup' : '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: user.value.trim(), name: name.value.trim(), password: pw.value }) });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || 'Sign-in failed');
+        CURRENT_USER = data.user;
+        overlay.remove();
+        done();
+      } catch (ex) { err.textContent = ex.message; submit.disabled = false; pw.select(); }
+    });
+  }
+  overlay.append(el('div', { class: 'auth-side', 'aria-hidden': 'true' },
+    el('div', { class: 'auth-side-in' }, el('b', {}, 'Every outlet, one view.'),
+      el('span', {}, 'POS, accounting and labour data synced, modelled and on a dashboard — sales, labour % and menu mix by location.'))), form);
+  if (location.hash.includes('signup') && mode === 'login' && signupOn) swap('signup');
 }
 
 /* Sidebar user chip + menu */
@@ -117,11 +166,30 @@ async function authUsersTab(main) {
   const panel = el('section', { class: 'panel' }, loading());
   main.append(el('div', { class: 'row', style: { marginBottom: '12px' } }, el('p', { class: 'muted grow', style: { margin: 0 } },
     'Admin: everything · Editor: build and run · Viewer: read-only'), btn('Add user', () => edit(null), { cls: 'primary', ic: 'plus' })), panel);
+  const pendBox = el('div');
+  panel.before(pendBox);
   const load = async () => {
-    const users = await api('/api/users');
+    const all = await api('/api/users');
+    const pend = all.filter((u) => u.pending);
+    const users = all.filter((u) => !u.pending);
+    pendBox.replaceChildren(pend.length ? el('section', { class: 'panel au-pending' },
+      el('div', { class: 'au-pending-h' }, el('h3', {}, `Waiting for approval (${pend.length})`), el('span', { class: 'muted small' }, 'Accounts created from the sign-up page')),
+      el('table', { class: 't' }, el('tbody', {}, pend.map((u) => {
+        const role = el('select', { class: 'field sm', 'aria-label': `Role for ${u.username}` }, ['viewer', 'editor', 'admin'].map((r) => el('option', { value: r, selected: r === u.role }, ROLE_LABEL[r])));
+        return el('tr', {},
+          el('td', {}, el('b', {}, u.name || u.username), el('div', { class: 'muted', style: { fontSize: '12px' } }, `${u.email || u.username}${u.company ? ` · ${u.company}` : ''}`)),
+          el('td', { class: 'muted small' }, `signed up ${ago(u.created)}`),
+          el('td', {}, role),
+          el('td', { style: { textAlign: 'right', whiteSpace: 'nowrap' } },
+            btn('Approve', async () => { try { await api(`/api/users/${u.id}`, { method: 'PUT', body: { role: role.value, active: true } }); toast(`${u.email || u.username} approved`); load(); } catch (e) { toast(e.message, 'err'); } }, { cls: 'sm primary', ic: 'check' }),
+            btn('Reject', async () => {
+              if (!(await confirmDialog(`Reject ${u.email || u.username}?`, 'The request is deleted. They can sign up again.', 'Reject'))) return;
+              try { await api(`/api/users/${u.id}`, { method: 'DELETE' }); load(); } catch (e) { toast(e.message, 'err'); }
+            }, { cls: 'sm' })));
+      })))) : '');
     panel.replaceChildren(el('table', { class: 't' }, el('thead', {}, el('tr', {}, ['User', 'Role', 'Status', 'Last sign-in', ''].map((h) => el('th', {}, h)))),
       el('tbody', {}, users.map((u) => el('tr', {},
-        el('td', {}, el('b', {}, u.name || u.username), el('div', { class: 'muted', style: { fontSize: '12px' } }, `${u.username}${u.email ? ` · ${u.email}` : ''}`)),
+        el('td', {}, el('b', {}, u.name || u.username), el('div', { class: 'muted', style: { fontSize: '12px' } }, `${u.username}${u.email && u.email !== u.username ? ` · ${u.email}` : ''}${u.company ? ` · ${u.company}` : ''}`)),
         el('td', {}, el('span', { class: `chip role-${u.role}` }, ROLE_LABEL[u.role])),
         el('td', {}, u.active ? (u.must_change ? el('span', { class: 'muted' }, 'Must set password') : 'Active') : el('span', { class: 'muted' }, 'Disabled')),
         el('td', { class: 'muted' }, u.last_login ? ago(u.last_login) : 'never'),

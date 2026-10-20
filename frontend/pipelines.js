@@ -565,7 +565,7 @@ async function viewPipeline(main, r) {
       btn('Add schedule', () => { defn.triggers.push({ type: 'schedule', name: `schedule${defn.triggers.length + 1}`, cron: '0 2 * * *', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, enabled: true, parameters: {} }); setDirty(); drawTrig(); }, { cls: 'sm', ic: 'plus' }),
       btn('Add tumbling window', () => { defn.triggers.push({ type: 'tumbling', name: `window${defn.triggers.length + 1}`, frequencyMinutes: 60, maxConcurrency: 1, startTime: new Date().toISOString().slice(0, 13) + ':00:00Z', enabled: true, parameters: {} }); setDirty(); drawTrig(); }, { cls: 'sm', ic: 'plus' })));
     drawTrig();
-    props.replaceChildren(el('h3', {}, stack.length > 1 ? `Inside ${stack[stack.length - 1].label}` : 'Pipeline'),
+    setKids(props, el('h3', {}, stack.length > 1 ? `Inside ${stack[stack.length - 1].label}` : 'Pipeline'),
       stack.length > 1 ? el('p', { class: 'pl-hint' }, 'Activities here run for each item / branch. Use @item() inside a ForEach.') : null,
       el('div', { class: 'pl-sec' }, 'Parameters'), paramBox, el('div', { class: 'pl-sec' }, 'Variables'), varBox,
       el('div', { class: 'pl-sec' }, 'Triggers (active after Publish)'), trigBox,

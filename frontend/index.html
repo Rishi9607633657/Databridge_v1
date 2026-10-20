@@ -5,12 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DataBridge</title>
 <link rel="icon" href="/static/favicon.png" type="image/png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/static/vendor/codemirror/addon/show-hint.css">
 <link rel="stylesheet" href="/static/styles.css">
+<link rel="stylesheet" href="/static/vendor/fonts/fonts.css">
+<link rel="stylesheet" href="/static/skins.css">
 <script src="/static/theme.js"></script>
 <script src="/static/layout.js"></script>
 </head>
@@ -28,11 +27,11 @@
     <a class="nav" data-view="workspace" href="#/workspace"><span data-icon="folder"></span>Workspace</a>
     <a class="nav" data-view="catalog" href="#/catalog"><span data-icon="db"></span>Catalog</a>
     <a class="nav" data-view="datahub" href="#/datahub"><span data-icon="hub"></span>Data Hub</a>
-    <a class="nav" data-view="agent" href="#/agent"><span data-icon="bot"></span>AI Agent</a>
     <a class="nav" data-view="workflows" href="#/workflows"><span data-icon="flow"></span>Workflows</a>
     <a class="nav" data-view="compute" href="#/compute"><span data-icon="cpu"></span>Compute</a>
     <a class="nav" data-view="sql" href="#/sql"><span data-icon="term"></span>SQL Editor</a>
     <a class="nav" data-view="dashboards" href="#/dashboards"><span data-icon="chart"></span>Dashboards</a>
+    <a class="nav" data-view="markets" href="#/markets"><span data-icon="trend"></span>Markets</a>
     <a class="nav" data-view="logs" href="#/logs"><span data-icon="logs"></span>Logs</a>
     <a class="nav" data-view="admin" href="#/admin"><span data-icon="gear"></span>Admin</a>
     <div class="grow"></div>
@@ -73,8 +72,8 @@
 <script src="/static/features.js"></script>
   <script src="/static/datahub.js"></script>
   <script src="/static/connectors.js"></script>
-  <script src="/static/airbyte_local.js"></script>
-  <script src="/static/agent.js"></script>
+  <script src="/static/connector_library.js"></script>
+  <script src="/static/tenants.js"></script>
 <script src="/static/admin.js"></script>
 <script src="/static/dash_ml.js"></script>
   <script src="/static/dash_themes.js"></script>
@@ -87,6 +86,8 @@
 <script src="/static/ai_chat.js"></script>
 <script src="/static/pipelines.js"></script>
 <script src="/static/jobs.js"></script>
+<script src="/static/markets.js"></script>
+<script src="/static/clusters.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

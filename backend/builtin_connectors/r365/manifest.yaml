@@ -1,0 +1,308 @@
+version: 6.7.0
+type: DeclarativeSource
+
+check:
+  type: CheckStream
+  stream_names: [locations]
+
+definitions:
+  requester:
+    type: HttpRequester
+    url_base: "{{ config.get('api_url') or 'https://odata.restaurant365.net/api/v2/views/' }}"
+    http_method: GET
+    authenticator:
+      type: BasicHttpAuthenticator
+      username: "{{ config['domain'] }}\\{{ config['username'] }}"
+      password: "{{ config['password'] }}"
+    request_headers:
+      Accept: application/json
+    error_handler:
+      type: DefaultErrorHandler
+      max_retries: 8
+      backoff_strategies:
+        - type: ExponentialBackoffStrategy
+          factor: 5
+
+  value_selector:
+    type: RecordSelector
+    extractor:
+      type: DpathExtractor
+      field_path: [value]
+
+  # OData server paging: follow @odata.nextLink (it already carries $filter / $skip)
+  next_link_paginator:
+    type: DefaultPaginator
+    pagination_strategy:
+      type: CursorPagination
+      cursor_value: "{{ response.get('@odata.nextLink', '') }}"
+      stop_condition: "{{ not response.get('@odata.nextLink') }}"
+    page_token_option:
+      type: RequestPath
+
+  # second-precision cursor taken from modifiedOn (R365 sends up to 7 decimals)
+  add_cursor:
+    type: AddFields
+    fields:
+      - path: [_modified_at]
+        value: "{{ (record.get('modifiedOn') or record.get('createdOn') or '')[:19] }}"
+      - path: [location_id]
+        value: "{{ record.get('locationId') or record.get('location') or record.get('location_Id') or record.get('locationID') }}"
+
+  modified_cursor:
+    type: DatetimeBasedCursor
+    cursor_field: _modified_at
+    cursor_datetime_formats: ["%Y-%m-%dT%H:%M:%S"]
+    datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+    start_datetime:
+      type: MinMaxDatetime
+      datetime: "{{ config['start_date'] }}"
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+    end_datetime:
+      type: MinMaxDatetime
+      datetime: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+    # sales views allow at most 31 days per request
+    step: "P{{ [config.get('window_days', 7) | int, 30] | min }}D"
+    cursor_granularity: PT1S
+    lookback_window: "PT{{ config.get('lookback_hours', 24) | int }}H"
+
+  incremental_stream:
+    type: DeclarativeStream
+    retriever:
+      type: SimpleRetriever
+      requester:
+        $ref: "#/definitions/requester"
+      record_selector:
+        $ref: "#/definitions/value_selector"
+      paginator:
+        $ref: "#/definitions/next_link_paginator"
+    incremental_sync:
+      $ref: "#/definitions/modified_cursor"
+    transformations:
+      - $ref: "#/definitions/add_cursor"
+
+  master_stream:
+    type: DeclarativeStream
+    retriever:
+      type: SimpleRetriever
+      requester:
+        $ref: "#/definitions/requester"
+      record_selector:
+        $ref: "#/definitions/value_selector"
+      paginator:
+        $ref: "#/definitions/next_link_paginator"
+
+streams:
+  - $ref: "#/definitions/incremental_stream"
+    name: transactions
+    primary_key: [transactionId]
+    retriever:
+      $ref: "#/definitions/incremental_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "Transaction?$filter={{ 'modifiedOn ge ' ~ stream_interval.start_time ~ ' and modifiedOn lt ' ~ format_datetime(str_to_datetime(stream_interval.end_time) + duration('PT1S'), '%Y-%m-%dT%H:%M:%SZ') }}"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema: {type: object, additionalProperties: true, properties: {transactionId: {type: [string, "null"]}, locationId: {type: [string, "null"]}, date: {type: [string, "null"]}, modifiedOn: {type: [string, "null"]}, _modified_at: {type: [string, "null"]}}}
+  - $ref: "#/definitions/incremental_stream"
+    name: transaction_details
+    primary_key: [transactionDetailId]
+    retriever:
+      $ref: "#/definitions/incremental_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "TransactionDetail?$filter={{ 'modifiedOn ge ' ~ stream_interval.start_time ~ ' and modifiedOn lt ' ~ format_datetime(str_to_datetime(stream_interval.end_time) + duration('PT1S'), '%Y-%m-%dT%H:%M:%SZ') }}"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema: {type: object, additionalProperties: true, properties: {transactionDetailId: {type: [string, "null"]}, transactionId: {type: [string, "null"]}, glAccountAutoId: {type: [string, "null"]}, modifiedOn: {type: [string, "null"]}, _modified_at: {type: [string, "null"]}}}
+  - $ref: "#/definitions/incremental_stream"
+    name: sales_employee
+    primary_key: [salesId]
+    retriever:
+      $ref: "#/definitions/incremental_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "SalesEmployee?$filter={{ 'modifiedOn ge ' ~ stream_interval.start_time ~ ' and modifiedOn lt ' ~ format_datetime(str_to_datetime(stream_interval.end_time) + duration('PT1S'), '%Y-%m-%dT%H:%M:%SZ') }}"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema: {type: object, additionalProperties: true, properties: {salesId: {type: [string, "null"]}, location: {type: [string, "null"]}, date: {type: [string, "null"]}, modifiedOn: {type: [string, "null"]}, _modified_at: {type: [string, "null"]}}}
+  - $ref: "#/definitions/incremental_stream"
+    name: sales_details
+    primary_key: [salesdetailID]
+    retriever:
+      $ref: "#/definitions/incremental_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "SalesDetail?$filter={{ 'modifiedOn ge ' ~ stream_interval.start_time ~ ' and modifiedOn lt ' ~ format_datetime(str_to_datetime(stream_interval.end_time) + duration('PT1S'), '%Y-%m-%dT%H:%M:%SZ') }}"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema: {type: object, additionalProperties: true, properties: {salesdetailID: {type: [string, "null"]}, salesID: {type: [string, "null"]}, location: {type: [string, "null"]}, date: {type: [string, "null"]}, modifiedOn: {type: [string, "null"]}, _modified_at: {type: [string, "null"]}}}
+  - $ref: "#/definitions/incremental_stream"
+    name: sales_payments
+    primary_key: [salesPaymentId]
+    retriever:
+      $ref: "#/definitions/incremental_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "SalesPayment?$filter={{ 'modifiedOn ge ' ~ stream_interval.start_time ~ ' and modifiedOn lt ' ~ format_datetime(str_to_datetime(stream_interval.end_time) + duration('PT1S'), '%Y-%m-%dT%H:%M:%SZ') }}"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema: {type: object, additionalProperties: true, properties: {salesPaymentId: {type: [string, "null"]}, location: {type: [string, "null"]}, date: {type: [string, "null"]}, modifiedOn: {type: [string, "null"]}, _modified_at: {type: [string, "null"]}}}
+  - $ref: "#/definitions/incremental_stream"
+    name: labor_details
+    primary_key: [laborId]
+    retriever:
+      $ref: "#/definitions/incremental_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "LaborDetail?$filter={{ 'modifiedOn ge ' ~ stream_interval.start_time ~ ' and modifiedOn lt ' ~ format_datetime(str_to_datetime(stream_interval.end_time) + duration('PT1S'), '%Y-%m-%dT%H:%M:%SZ') }}"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema: {type: object, additionalProperties: true, properties: {laborId: {type: [string, "null"]}, location: {type: [string, "null"]}, dateWorked: {type: [string, "null"]}, modifiedOn: {type: [string, "null"]}, _modified_at: {type: [string, "null"]}}}
+  - $ref: "#/definitions/incremental_stream"
+    name: entity_deleted
+    primary_key: [entityId, entityName]
+    retriever:
+      $ref: "#/definitions/incremental_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: "EntityDeleted?$filter={{ 'deletedOn ge ' ~ stream_interval.start_time ~ ' and deletedOn lt ' ~ format_datetime(str_to_datetime(stream_interval.end_time) + duration('PT1S'), '%Y-%m-%dT%H:%M:%SZ') }}"
+    transformations:
+      - type: AddFields
+        fields:
+          - path: [_modified_at]
+            value: "{{ (record.get('deletedOn') or '')[:19] }}"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema: {type: object, additionalProperties: true, properties: {entityId: {type: [string, "null"]}, entityName: {type: [string, "null"]}, deletedOn: {type: [string, "null"]}, _modified_at: {type: [string, "null"]}}}
+  - $ref: "#/definitions/master_stream"
+    name: locations
+    primary_key: [locationId]
+    retriever:
+      $ref: "#/definitions/master_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: Location
+    transformations:
+      - type: AddFields
+        fields:
+          - path: [location_id]
+            value: "{{ record.get('locationId') }}"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema: {type: object, additionalProperties: true, properties: {locationId: {type: [string, "null"]}, name: {type: [string, "null"]}, locationNumber: {type: [string, "null"]}, location_id: {type: [string, "null"]}}}
+  - $ref: "#/definitions/master_stream"
+    name: companies
+    primary_key: [companyId]
+    retriever:
+      $ref: "#/definitions/master_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: Company
+    schema_loader:
+      type: InlineSchemaLoader
+      schema: {type: object, additionalProperties: true, properties: {companyId: {type: [string, "null"]}, name: {type: [string, "null"]}}}
+  - $ref: "#/definitions/master_stream"
+    name: gl_accounts
+    primary_key: [glAccountId]
+    retriever:
+      $ref: "#/definitions/master_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: GlAccount
+    schema_loader:
+      type: InlineSchemaLoader
+      schema: {type: object, additionalProperties: true, properties: {glAccountId: {type: [string, "null"]}, glAccountAutoId: {type: [string, "null"]}, name: {type: [string, "null"]}}}
+  - $ref: "#/definitions/master_stream"
+    name: items
+    primary_key: [itemId]
+    retriever:
+      $ref: "#/definitions/master_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: Item
+    schema_loader:
+      type: InlineSchemaLoader
+      schema: {type: object, additionalProperties: true, properties: {itemId: {type: [string, "null"]}, name: {type: [string, "null"]}}}
+  - $ref: "#/definitions/master_stream"
+    name: employees
+    primary_key: [employeeId]
+    retriever:
+      $ref: "#/definitions/master_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: Employee
+    schema_loader:
+      type: InlineSchemaLoader
+      schema: {type: object, additionalProperties: true, properties: {employeeId: {type: [string, "null"]}, fullName: {type: [string, "null"]}}}
+  - $ref: "#/definitions/master_stream"
+    name: job_titles
+    primary_key: [jobTitleId]
+    retriever:
+      $ref: "#/definitions/master_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: JobTitle
+    schema_loader:
+      type: InlineSchemaLoader
+      schema: {type: object, additionalProperties: true, properties: {jobTitleId: {type: [string, "null"]}, name: {type: [string, "null"]}}}
+  - $ref: "#/definitions/master_stream"
+    name: pos_employees
+    primary_key: [posEmployeeId]
+    retriever:
+      $ref: "#/definitions/master_stream/retriever"
+      requester:
+        $ref: "#/definitions/requester"
+        path: POSEmployee
+    schema_loader:
+      type: InlineSchemaLoader
+      schema: {type: object, additionalProperties: true, properties: {posEmployeeId: {type: [string, "null"]}, name: {type: [string, "null"]}}}
+
+spec:
+  type: Spec
+  connection_specification:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    required: [domain, username, password, start_date]
+    additionalProperties: true
+    properties:
+      domain:
+        type: string
+        title: R365 domain
+        description: The first part of your R365 address — for https://yourcompany.restaurant365.com enter yourcompany.
+        examples: ["yourcompany"]
+        order: 0
+      username:
+        type: string
+        title: Username
+        description: An R365 user with the Accounting Clerk or Full Access role. A dedicated connector user sees all locations.
+        order: 1
+      password:
+        type: string
+        title: Password
+        airbyte_secret: true
+        order: 2
+      start_date:
+        type: string
+        title: History from
+        description: First sync loads records modified since this date; later syncs only load what changed since the last run.
+        format: date-time
+        pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        examples: ["2025-01-01T00:00:00Z"]
+        order: 3
+      window_days:
+        type: integer
+        title: Days per request window
+        description: History is read in windows of this many days (R365 sales views allow at most 31).
+        default: 7
+        minimum: 1
+        maximum: 30
+        order: 4
+      lookback_hours:
+        type: integer
+        title: Look-back (hours)
+        description: Each incremental run re-reads this many hours before the last change seen (R365 times have no time zone). Upsert removes duplicates.
+        default: 24
+        minimum: 0
+        maximum: 168
+        order: 5

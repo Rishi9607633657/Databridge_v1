@@ -537,7 +537,7 @@ function renderTableOutput(payload, meta = {}, onChange = null) {
           opSel.addEventListener('change', () => { condOp = opSel.value; drawInputs(); });
           drawInputs();
           [ia, ib].forEach((x) => x.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); }));
-          bodyEl.replaceChildren(opSel, inputs, kind === 'num' ? el('p', { class: 'muted small' }, `Range in data: ${dtShort(p.min)} – ${dtShort(p.max)}`) : kind === 'date' ? el('p', { class: 'muted small' }, `Range in data: ${p.min} – ${p.max}`) : null);
+          setKids(bodyEl, opSel, inputs, kind === 'num' ? el('p', { class: 'muted small' }, `Range in data: ${dtShort(p.min)} – ${dtShort(p.max)}`) : kind === 'date' ? el('p', { class: 'muted small' }, `Range in data: ${p.min} – ${p.max}`) : null);
           setTimeout(() => ia.focus(), 0);
         }
       }

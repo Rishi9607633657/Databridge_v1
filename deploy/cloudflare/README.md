@@ -45,3 +45,19 @@ For `-Token`, set the Public hostname service to **HTTP** `localhost:8800`. Also
 ```bash
 docker compose --env-file .env.cloudflare up -d --build    # after applying databridge-update.zip
 ```
+
+
+## Own domain with a named tunnel (config on this PC) — `named-tunnel.ps1`
+
+For `databridge-analytics.in` (move its nameservers from GoDaddy to Cloudflare first), with DataBridge running on port 8800:
+
+```powershell
+cd C:\Users\Hp\Downloads\stratum\stratum\deploy\cloudflare
+.\named-tunnel.ps1                       # https://app.databridge-analytics.in in this window
+.\named-tunnel.ps1 -Service              # as a Windows service (PowerShell as Administrator)
+```
+
+It runs, once: `cloudflared tunnel login`, `cloudflared tunnel create databridge`,
+`cloudflared tunnel route dns databridge app.databridge-analytics.in` (bare hostname — no `https://`),
+writes `C:\ProgramData\DataBridge\cloudflared\config.yml` (hostname → http://localhost:8800, everything else 404)
+and starts the tunnel.

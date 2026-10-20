@@ -1,0 +1,76 @@
+# DataBridge on a free Oracle Cloud VM (Ampere A1: 2 OCPU / 12 GB) — or any Linux box with Docker.
+# Started by setup.sh. Nothing listens on the internet: the public URL comes in through your Cloudflare Tunnel.
+name: databridge
+
+services:
+  hms:                                            # Hive metastore (catalog) on PostgreSQL
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hive_metastore
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: ${HMS_PASSWORD:?run setup.sh first}
+    volumes:
+      - hms-data:/var/lib/postgresql/data
+      - ../../hms-schema:/hms-schema:ro
+      - ./hms-init.sh:/docker-entrypoint-initdb.d/01-hms.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hive -d hive_metastore"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  databridge:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: databridge:latest
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      STRATUM_HOST: 0.0.0.0
+      STRATUM_PORT: "8800"
+      STRATUM_ROOT: /app
+      AUTH_ENABLED: "true"                        # never expose DataBridge without sign-in
+      FORWARDED_ALLOW_IPS: "*"                    # trust X-Forwarded-Proto from cloudflared (private network only)
+      HMS_JDBC_URL: jdbc:postgresql://hms:5432/hive_metastore
+      HMS_USER: hive
+      HMS_PASSWORD: ${HMS_PASSWORD}
+      CATALOG_BACKEND: metastore
+      METASTORE_DSN: postgresql://hive:${HMS_PASSWORD}@hms:5432/hive_metastore
+      # small VM: each open notebook / SQL / dashboard kernel has its own Spark driver
+      STRATUM_SPARK_CONF: '{"spark.driver.memory": "${SPARK_DRIVER_MEMORY:-2g}", "spark.sql.shuffle.partitions": "8"}'
+    volumes:
+      - ../../.env:/app/.env
+      - ../../workspace:/app/workspace            # notebooks + spark-warehouse (Delta tables)
+      - ../../secrets:/app/secrets:ro
+      - ../../jars:/app/jars
+      - databridge-state:/app/.stratum            # users, connections, syncs, dashboards, tenants
+      - ivy-cache:/root/.ivy2                     # Spark / Delta jars, downloaded once
+    ports:
+      - "127.0.0.1:8800:8800"                     # only this VM; the internet comes in through the tunnel
+    depends_on:
+      hms:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8800/')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./cloudflared:/etc/cloudflared:ro         # config.yml + <tunnel-id>.json (written by setup.sh)
+    depends_on:
+      databridge:
+        condition: service_healthy
+
+volumes:
+  hms-data:
+  databridge-state:
+  ivy-cache:

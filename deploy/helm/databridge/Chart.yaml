@@ -1,0 +1,6 @@
+apiVersion: v2
+name: databridge
+description: DataBridge analytics platform on Kubernetes (AKS, EKS, OKE or any cluster) — Spark executors as pods, autoscaled node pools
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
