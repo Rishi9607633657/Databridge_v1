@@ -111,8 +111,31 @@ def _dataset(p: Path):
     return ds
 
 
+def sql_str(v):
+    """A string literal that means the same in Spark SQL and (after _to_duck_sql) in DuckDB."""
+    return "'" + str(v).replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+_ESC = {"n": "\n", "t": "\t", "r": "\r", "0": "\0"}
+
+
+def _duck_literal(body):
+    """Spark string-literal escapes (backslash) -> DuckDB literal body (quotes doubled, no backslash escapes)."""
+    out, i = [], 0
+    while i < len(body):
+        ch = body[i]
+        if ch == "\\" and i + 1 < len(body):
+            nx = body[i + 1]
+            out.append("''" if nx == "'" else _ESC.get(nx, nx))
+            i += 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _to_duck_sql(sql):
-    """Spark SQL -> DuckDB: backticks -> double quotes (outside string literals), common function names."""
+    """Spark SQL -> DuckDB: backticks -> double quotes (outside string literals), Spark string escapes, common function names."""
     out, i, n = [], 0, len(sql)
     while i < n:
         ch = sql[i]
@@ -128,7 +151,7 @@ def _to_duck_sql(sql):
                         continue
                     break
                 j += 1
-            out.append(sql[i:j + 1])
+            out.append("'" + _duck_literal(sql[i + 1:j]) + "'")
             i = j + 1
         elif ch == "`":
             j = sql.find("`", i + 1)
@@ -267,9 +290,11 @@ async def query(sql, limit, spark_call):
     """Try DuckDB (in a worker thread, parallel); fall back to Spark (`spark_call()` coroutine factory)."""
     import asyncio
     import logging
+    from . import governance
+    governed = await governance.apply(sql, purpose="dashboard")   # Spark fallback applies the same rules itself
     if enabled():
         try:
-            return await asyncio.to_thread(run, sql, limit)
+            return await asyncio.to_thread(run, governed, limit)
         except NotFast as e:
             logging.getLogger("databridge").info("fast SQL -> Spark (%s)", e)
             if mode() == "duckdb":

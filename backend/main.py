@@ -1,14 +1,15 @@
 """DataBridge API server — serves the UI and the REST/WebSocket API."""
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import clusters, features, datahub, connectors, tenants, tts, admin, airflow, assistant, auth, background, catalog, compute, dag_studio, dash_ai, dash_story, dashboards, delta_ops, editor, git_ops, jobs, logs, markets, pipelines, workspace
+from . import alerts, budgets, clusters, ml, quality, sso, features, governance, datahub, connectors, tenants, tts, admin, airflow, assistant, auth, background, boards, catalog, compute, dag_studio, dash_ai, dash_story, dashboards, delta_ops, editor, git_ops, jobs, logs, markets, pipelines, workspace
 from .airbyte import airbyte
 from .kernels import SQL_KEY, SqlError, kernels, run_sql
 from .settings import settings
@@ -32,7 +33,11 @@ async def lifespan(_app):
                    asyncio.create_task(auto_land_loop()),                 # optional external Airbyte server only
                    asyncio.create_task(datahub.prewarm()),                # Spark starts in the background, not on the first click
                    asyncio.create_task(connectors.scheduler_loop()),
-                   asyncio.create_task(cluster_meter_loop())])                # cluster usage metering (cost / charge-back)     # scheduled / real-time / event syncs
+                   asyncio.create_task(cluster_meter_loop()),
+                   asyncio.create_task(budgets.loop()),
+                   asyncio.create_task(alerts.loop()),
+                   asyncio.create_task(quality.loop()),
+                   asyncio.create_task(ml.startup())])                # cluster usage metering (cost / charge-back)     # scheduled / real-time / event syncs
     starter = asyncio.create_task(background())
     yield
     starter.cancel()
@@ -40,10 +45,17 @@ async def lifespan(_app):
         t.cancel()
     await pipelines.engine.shutdown()
     await jobs.manager.shutdown()
+    ml.shutdown()
     await kernels.shutdown_all()
 
 
 app = FastAPI(title="DataBridge", lifespan=lifespan)
+from .extras_api import router as _extras_router  # noqa: E402
+app.include_router(_extras_router)
+from .geomaps import router as _maps_router  # noqa: E402
+app.include_router(_maps_router)
+from .overview import router as _overview_router  # noqa: E402
+app.include_router(_overview_router)
 
 NO_AUDIT = ("/api/auth/", "/api/editor/", "/api/sql/queries")
 
@@ -58,14 +70,18 @@ async def auth_middleware(request: Request, call_next):
         return resp
     h = request.headers.get("authorization", "")
     bearer = h[7:].strip() if h.lower().startswith("bearer ") else None
+    if h.lower().startswith("basic "):                    # BI tools (Power BI / Excel): user name + access token as password
+        bearer = auth.basic_token(h[6:].strip())
     user = auth.resolve(request.cookies.get(auth.COOKIE), bearer)
     ok, code, msg = auth.allowed(user, request.method, path)
     if not ok:
-        return JSONResponse({"detail": msg}, status_code=code)
+        hdr = {"WWW-Authenticate": 'Basic realm="DataBridge", charset="UTF-8"'} if code == 401 and path.startswith(("/api/odata", "/api/bi/")) else None
+        return JSONResponse({"detail": msg}, status_code=code, headers=hdr)
     off = features.blocked(user, path) if auth.AUTH_ENABLED or user else None
     if off:
         return JSONResponse({"detail": f"{features.label(off)} is turned off for your account. Ask your administrator.", "feature": off}, status_code=403)
     request.state.user = user
+    governance.current_user.set(user)                    # data access rules for queries run on this person's behalf
     resp = await call_next(request)
     if (request.method not in ("GET", "HEAD", "OPTIONS") and user and user["id"] != "__service__"
             and not path.startswith(NO_AUDIT) and not path.endswith(("/query", "/options", "/preview")) and auth.AUTH_ENABLED):
@@ -86,15 +102,49 @@ def _set_cookie(resp, request, token):
 
 @app.get("/api/auth/me")
 def auth_me(request: Request):
+    from .settings import env as _env
     return {"auth_enabled": auth.AUTH_ENABLED, "needs_setup": auth.AUTH_ENABLED and auth.user_count() == 0,
             "signup": {k: v for k, v in auth.signup_settings().items() if k != "role"}, "skin": _skin(),
+            "sso": sso.providers(), "sso_only": (_env("SSO_ONLY", "false") or "false").lower() == "true",
             "user": _user(request) or auth.resolve(request.cookies.get(auth.COOKIE))}
+
+
+SSO_COOKIE = "databridge_sso_state"
+
+
+@app.get("/api/auth/sso/{pid}/start")
+async def auth_sso_start(request: Request, pid: str, next: str = ""):
+    from fastapi.responses import RedirectResponse
+    url, state = await sso.start(pid, str(request.base_url), next)
+    resp = RedirectResponse(url, status_code=302)
+    resp.set_cookie(SSO_COOKIE, state, max_age=600, httponly=True, samesite="lax", secure=request.url.scheme == "https", path="/api/auth/sso/")
+    return resp
+
+
+@app.get("/api/auth/sso/{pid}/callback")
+async def auth_sso_callback(request: Request, pid: str, code: str = "", state: str = "", error: str = "", error_description: str = ""):
+    from urllib.parse import quote
+    from fastapi.responses import RedirectResponse
+    ip = request.client.host if request.client else ""
+    try:
+        if error:
+            raise HTTPException(400, error_description or error)
+        token, nxt = await sso.finish(pid, code, state, request.cookies.get(SSO_COOKIE), str(request.base_url), ip, request.headers.get("user-agent", ""))
+    except HTTPException as e:
+        auth.audit("?", f"login.sso.{pid}.failed", str(e.detail)[:200], e.status_code, ip)
+        resp = RedirectResponse(f"/?sso_error={quote(str(e.detail))}#/home", status_code=302)
+        resp.delete_cookie(SSO_COOKIE, path="/api/auth/sso/")
+        return resp
+    resp = RedirectResponse("/" + (nxt or "#/home"), status_code=302)
+    resp.delete_cookie(SSO_COOKIE, path="/api/auth/sso/")
+    _set_cookie(resp, request, token)
+    return resp
 
 
 def _skin():
     from .settings import env as _env
-    v = (_env("UI_SKIN", "classic") or "classic").strip().lower()
-    return v if v in ("classic", "saffron", "studio", "midnight", "ledger") else "classic"
+    v = (_env("UI_SKIN", "vivid") or "vivid").strip().lower()
+    return v if v in ("vivid", "classic", "saffron", "studio", "midnight", "ledger") else "vivid"
 
 
 @app.post("/api/auth/signup")
@@ -230,6 +280,8 @@ async def search(q: str):
     tables = []
     try:
         tables = await catalog.search(q)
+        u = governance.current_user.get()
+        tables = [t for t in tables if governance.can(u, f"{t.get('database')}.{t.get('name')}")]
     except Exception:  # noqa: BLE001
         pass
     return {"notebooks": workspace.search(q), "tables": tables}
@@ -468,7 +520,7 @@ def _nb_cluster(path):
 async def k_start(request: Request, path: str = Body(..., embed=True), cluster_id: str | None = Body(None, embed=True)):
     workspace.resolve(path)
     cid = cluster_id if cluster_id is not None else (_nb_cluster(path) or clusters.default_id())
-    extra = {"DATABRIDGE_NOTEBOOK_PATH": path}
+    extra = {"DATABRIDGE_NOTEBOOK_PATH": path, "DATABRIDGE_USER": (_user(request) or {}).get("username", "")}
     if cid and cid != "local-default":
         extra.update(clusters.kernel_env(cid, f"nb-{Path(path).stem}", (getattr(request.state, "user", None) or {}).get("username", "")))
     key = f"nb:{path}"
@@ -693,11 +745,34 @@ async def dash_story_ep(did: str, body: dict = Body(...)):
     return await dash_story.story(body)
 
 
+@app.post("/api/dashboards/ai/board")
+async def dash_ai_board(request: Request, body: dict = Body(...)):
+    """Live Overview board on your own tables (the Overview page with real numbers). body: {prompt?, tables?, schema?, name?}"""
+    u = getattr(request.state, "user", None) or {}
+    return await boards.create(body.get("prompt") or "", body.get("tables") or [], body.get("schema") or None, body.get("name") or "", u.get("username", ""))
+
+
+@app.get("/api/dashboards/{did}/board-data")
+async def dash_board_data(request: Request, did: str, refresh: int = 0):
+    """Compact daily aggregates per location (+ categories / segments) for a live Overview board (gzip: it can be a few MB)."""
+    import gzip as _gzip
+    body = json.dumps(await boards.data(did, bool(refresh)), separators=(",", ":"), default=str).encode()
+    if "gzip" in (request.headers.get("accept-encoding") or "") and len(body) > 4096:
+        return Response(_gzip.compress(body, 5), media_type="application/json", headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
+    return Response(body, media_type="application/json")
+
+
+@app.put("/api/dashboards/{did}/board")
+def dash_board_save(did: str, body: dict = Body(...)):
+    """Change which column plays which role on a live Overview board, and its words. body: {name?, map?, labels?}"""
+    return boards.update(did, body)
+
+
 @app.post("/api/dashboards/ai/plan")
 async def dash_ai_plan(body: dict = Body(...)):
     """Design a dashboard for review (nothing is saved). body: {prompt, tables?, schema?, use_ai?}"""
     return await dash_ai.plan(body.get("prompt"), body.get("tables") or [], body.get("use_ai", True) is not False, body.get("schema") or None,
-                              body.get("context") or None)
+                              body.get("context") or None, style=body.get("style") or None)
 
 
 @app.post("/api/dashboards/ai/model")
@@ -740,7 +815,8 @@ def dash_ai_create(request: Request, body: dict = Body(...)):
 @app.post("/api/dashboards/ai/build")
 async def dash_ai_build(request: Request, body: dict = Body(...)):
     """One step: plan and save (kept for scripts)."""
-    out = await dash_ai.plan(body.get("prompt"), body.get("tables") or [], body.get("use_ai", True) is not False, body.get("schema") or None)
+    out = await dash_ai.plan(body.get("prompt"), body.get("tables") or [], body.get("use_ai", True) is not False, body.get("schema") or None,
+                             body.get("context") or None, style=body.get("style") or None)
     u = getattr(request.state, "user", None) or {}
     d = dashboards.create_dashboard({"name": (body.get("name") or out["name"]).strip() or "AI dashboard",
                                      "description": out["description"], "definition": out["definition"]}, u.get("username", ""))
@@ -765,14 +841,20 @@ def dash_delete(did: str):
 
 
 @app.post("/api/dashboards/{did}/query")
-async def dash_query(did: str, body: dict = Body(...)):
-    """body: {dataset, params, force} — or {sql, params} to preview unsaved SQL (editors only)."""
-    return await dashboards.query(did, body.get("dataset"), body.get("params") or {}, bool(body.get("force")))
+async def dash_query(request: Request, did: str, body: dict = Body(...)):
+    """body: {dataset, params, force} — or {sql, params} to preview unsaved SQL (editors only). Big results are gzipped."""
+    import gzip as _gzip
+    out = await dashboards.query(did, body.get("dataset"), body.get("params") or {}, bool(body.get("force")))
+    data = json.dumps(out, separators=(",", ":"), default=str).encode()
+    if len(data) > 32768 and "gzip" in (request.headers.get("accept-encoding") or ""):
+        return Response(_gzip.compress(data, 5), media_type="application/json", headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
+    return Response(data, media_type="application/json")
 
 
 @app.post("/api/dashboards/{did}/preview")
 async def dash_preview(did: str, body: dict = Body(...)):
-    return await dashboards.query(did, None, body.get("params") or {}, True, body.get("sql") or "")
+    mr = body.get("maxRows")
+    return await dashboards.query(did, None, body.get("params") or {}, True, body.get("sql") or "", mr if isinstance(mr, int) else None)
 
 
 @app.post("/api/dashboards/{did}/options")
@@ -1355,7 +1437,9 @@ async def cat_create_db(name: str = Body(...), comment: str | None = Body(None),
 
 @app.get("/api/catalog/databases/{db}/tables")
 async def cat_tables(db: str):
-    return await catalog.tables(db)
+    u = governance.current_user.get()
+    rows = await catalog.tables(db)
+    return rows if governance.exempt_user(u) or not governance.enabled() else [t for t in rows if governance.can(u, f"{db}.{t['name']}")]
 
 
 @app.get("/api/catalog/databases/{db}/tables/{name}")

@@ -68,6 +68,10 @@ function authScreen(mode, done) {
       el('img', { src: '/static/logo-full.png', alt: 'DataBridge', class: 'auth-logo' }),
       el('h1', {}, mode === 'setup' ? 'Welcome — create the admin account' : 'Sign in'),
       mode === 'setup' ? el('p', { class: 'muted' }, 'This is the first sign-in on this DataBridge. The account you create here can add other users.') : null,
+      mode === 'login' && (AUTH_INFO.sso || []).length ? el('div', { class: 'auth-sso' },
+        AUTH_INFO.sso.map((p) => el('a', { class: 'btn auth-sso-btn', href: `/api/auth/sso/${p.id}/start?next=${encodeURIComponent(location.hash || '#/home')}` },
+          el('span', { class: `auth-sso-logo sso-${p.id}`, 'aria-hidden': 'true' }), `Continue with ${p.label}`)),
+        el('div', { class: 'auth-or' }, el('span', {}, AUTH_INFO.sso_only ? 'Admins: sign in with password' : 'or use your password'))) : null,
       el('label', { class: 'lbl' }, mode === 'setup' ? 'Username' : 'Username or email', user),
       mode === 'setup' ? el('label', { class: 'lbl' }, 'Full name', name) : null,
       el('label', { class: 'lbl' }, 'Password', pw),
@@ -77,6 +81,8 @@ function authScreen(mode, done) {
       mode === 'login' && signupOn ? el('p', { class: 'auth-alt' }, 'New to DataBridge? ', el('a', { href: '#', onClick: (e) => { e.preventDefault(); swap('signup'); } }, 'Create an account')) : null,
     ].filter(Boolean));
     setTimeout(() => user.focus(), 0);
+    const ssoErr = new URLSearchParams(location.search).get('sso_error');
+    if (ssoErr) { err.textContent = ssoErr; history.replaceState(null, '', '/' + location.hash); }
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       err.textContent = '';
@@ -204,6 +210,7 @@ async function authUsersTab(main) {
     const fields = [
       ...(u ? [] : [{ name: 'username', label: 'Username', value: '' }]),
       { name: 'name', label: 'Full name', value: u ? u.name : '', required: false }, { name: 'email', label: 'Email (optional)', value: u ? u.email : '', required: false },
+      { name: 'company', label: 'Company / customer (used for invoices, budgets and row filters)', value: u ? (u.company || '') : '', required: false, placeholder: 'e.g. acme' },
       { name: 'role', label: 'Role', type: 'select', value: u ? u.role : 'editor', options: (CURRENT_USER && CURRENT_USER.role === 'super_admin' ? ['super_admin'] : []).concat(['admin', 'editor', 'viewer']) },
       { name: 'password', type: 'password', label: u ? 'Reset password (leave empty to keep)' : 'Temporary password (user must change it)', value: '', required: !u },
       ...(u ? [{ name: 'active', label: 'Account', type: 'select', value: u.active ? 'active' : 'disabled', options: ['active', 'disabled'] }] : []),
@@ -211,7 +218,7 @@ async function authUsersTab(main) {
     const v = await formDialog({ title: u ? `Edit ${u.username}` : 'Add user', submit: u ? 'Save' : 'Create user', fields });
     if (!v) return;
     try {
-      if (u) await api(`/api/users/${u.id}`, { method: 'PUT', body: { name: v.name, email: v.email, role: v.role, active: v.active === 'active', ...(v.password ? { password: v.password } : {}) } });
+      if (u) await api(`/api/users/${u.id}`, { method: 'PUT', body: { name: v.name, email: v.email, company: v.company, role: v.role, active: v.active === 'active', ...(v.password ? { password: v.password } : {}) } });
       else await api('/api/users', { method: 'POST', body: v });
       toast(u ? 'User updated' : 'User created — share the temporary password with them'); load();
     } catch (e) { toast(e.message, 'err'); }
@@ -223,7 +230,9 @@ async function authUsersTab(main) {
 async function authAuditTab(main) {
   const q = el('input', { class: 'field', type: 'search', placeholder: 'Filter by action or target (e.g. pipeline, settings, login)', style: { maxWidth: '420px' } });
   const panel = el('section', { class: 'panel' }, loading());
-  main.append(el('div', { class: 'row', style: { marginBottom: '12px' } }, q, el('span', { class: 'grow' }),
+  const quick = el('select', { class: 'field', style: { width: '190px' }, 'aria-label': 'Show' }, [['', 'All events'], ['data.read', 'Data access (who read what)'], ['login', 'Sign-ins'], ['settings', 'Settings changes'], ['grant', 'Permission changes'], ['delete', 'Deletes']].map(([v, l]) => el('option', { value: v }, l)));
+  quick.addEventListener('change', () => { q.value = quick.value === 'grant' ? 'governance' : quick.value; load(); });
+  main.append(el('div', { class: 'row', style: { marginBottom: '12px' } }, quick, q, el('span', { class: 'grow' }),
     btn('Export CSV', async () => {
       const rows = await api('/api/audit?limit=5000');
       download('databridge_audit.csv', toCsv({ columns: ['time', 'user', 'action', 'target', 'status', 'ip'],

@@ -24,8 +24,22 @@ function el(tag, attrs = {}, ...kids) {
 }
 
 const ICONS = {
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
+  shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+  graph: '<circle cx="5" cy="6" r="2.2"/><circle cx="5" cy="18" r="2.2"/><circle cx="19" cy="12" r="2.2"/><path d="M7.2 6.6l9.6 4.6M7.2 17.4l9.6-4.6"/>',
+  flask: '<path d="M9 3h6M10 3v6L4.5 18.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3"/><path d="M7 15h10"/>',
+  chat: '<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9.5h8M8 12.5h5"/>',
+  plug: '<path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0z"/><path d="M12 17v4"/>',
+  key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3"/>',
   trend: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
   home: '<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+  overview: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
+  analytics: '<path d="M3 3v18h18"/><path d="M8 17v-4M12 17V8M16 17v-6M20 17V5"/>',
+  report: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6M9 9h2"/>',
+  pulse: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  sources: '<ellipse cx="11" cy="5" rx="7" ry="3"/><path d="M4 5v12c0 1.7 3.1 3 7 3M18 5v5M4 11c0 1.7 3.1 3 7 3"/><path d="M15 17h6M18 14l3 3-3 3"/>',
+  sliders: '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
   folder: '<path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   db: '<ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
   flow: '<rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="15" width="6" height="6" rx="1"/><path d="M9 6h4a2 2 0 0 1 2 2v7"/>',
@@ -237,11 +251,17 @@ function openInSql(query) {
 /* ================= Home ================= */
 async function viewHome(main) {
   const qi = (ic, bg, fg) => el('span', { class: 'qi', style: { background: bg, color: fg } }, icon(ic));
+  const hr = new Date().getHours();
+  const first = CURRENT_USER && (CURRENT_USER.name || CURRENT_USER.username) ? ` ${String(CURRENT_USER.name || CURRENT_USER.username).split(' ')[0]}` : '';
   main.append(
     el('div', { class: 'hero' },
       el('img', { class: 'hero-logo', src: '/static/logo-full.png', alt: 'DataBridge' }),
+      el('h1', { class: 'hero-greet' }, `${hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening'}${first}`),
       el('p', {}, 'Build, schedule and query your lakehouse — bronze to gold.')),
     el('div', { class: 'quick' },
+      el('a', { class: 'quick-hi', href: '/overview' }, qi('globe', 'linear-gradient(135deg,#3B82F6,#2F6BFF)', '#fff'), el('b', {}, 'Business overview'), el('span', { class: 'd' }, 'KPIs, 3D globe and AI insights by domain')),
+      dbFeat('dashboards') && dbFeat('dashboards_ai') && (!CURRENT_USER || CURRENT_USER.role !== 'viewer')
+        ? el('a', { class: 'quick-hi', href: '#/dashboards?ai=1' }, qi('spark', 'linear-gradient(135deg,#A78BFA,#7C3AED)', '#fff'), el('b', {}, 'Build a dashboard with AI'), el('span', { class: 'd' }, 'Pick tables — get KPIs, globe and charts')) : null,
       el('button', { type: 'button', onClick: () => newNotebook('') }, qi('nb', '#E7EFFF', '#0A5CFF'), el('b', {}, 'New notebook'), el('span', { class: 'd' }, 'PySpark and SQL in a Jupyter kernel')),
       el('button', { type: 'button', onClick: () => (location.hash = '#/jobedit/new') }, qi('flow', '#F6EDDA', '#8A5A10'), el('b', {}, 'Create a job'), el('span', { class: 'd' }, 'Schedule notebooks with retries')),
       el('button', { type: 'button', onClick: () => (location.hash = '#/catalog') }, qi('db', '#E3F7FC', '#0891B2'), el('b', {}, 'Browse catalog'), el('span', { class: 'd' }, 'Schemas, tables, history, DDL')),
@@ -1076,7 +1096,8 @@ async function viewCatalog(main, r) {
       btn('Query', () => openInSql(`SELECT *\nFROM ${fq}\nLIMIT 100`), { cls: 'primary', ic: 'term' }),
       btn('Drop', drop, { cls: 'danger', ic: 'trash' })));
 
-    const tabs = ['Columns', 'Sample data', 'Profile (EDA)', 'History & time travel', 'Maintenance', 'Details', 'DDL'].filter((x) => x !== 'Maintenance' || dbFeat('delta_maintenance'));
+    const extraTabs = (window.CAT_EXTRA_TABS || []).filter((x) => !x.when || x.when());
+    const tabs = ['Columns', 'Sample data', 'Profile (EDA)', ...extraTabs.map((x) => x.label), 'History & time travel', 'Maintenance', 'Details', 'DDL'].filter((x) => x !== 'Maintenance' || dbFeat('delta_maintenance'));
     const kindOf = (ty) => (/^(tinyint|smallint|int|integer|bigint|long|short|float|double|real|decimal|number)/i.test(ty || '') ? 'num' : /^(date|timestamp)/i.test(ty || '') ? 'date' : /^bool/i.test(ty || '') ? 'bool' : 'text');
     const badge = (ty) => { const k = kindOf(ty); return el('span', { class: `dt-type k-${k}` }, k === 'num' ? '123' : k === 'date' ? 'DATE' : k === 'bool' ? 'T/F' : 'Abc'); };
     const tabBar = el('div', { class: 'tabs', role: 'tablist' });
@@ -1085,6 +1106,8 @@ async function viewCatalog(main, r) {
     const show = async (name) => {
       [...tabBar.children].forEach((b) => b.setAttribute('aria-selected', String(b.textContent === name)));
       pane.replaceChildren();
+      const ext = extraTabs.find((x) => x.label === name);
+      if (ext) { try { await ext.render(pane, db, tbl, t); } catch (e) { pane.replaceChildren(errBox(e)); } return; }
       if (name === 'Columns') {
         const parts = new Set(t.partition_columns || []);
         const q = el('input', { class: 'field cat-q', type: 'search', placeholder: `Search ${t.columns.length} columns…`, 'aria-label': 'Search columns' });
@@ -1142,7 +1165,8 @@ async function viewCatalog(main, r) {
       }
     };
     tabs.forEach((name) => tabBar.append(el('button', { type: 'button', role: 'tab', onClick: () => show(name) }, name)));
-    show('Columns');
+    const want = (r.params.get('tab') || '').toLowerCase();
+    show((want && tabs.find((x) => x.toLowerCase().startsWith(want))) || 'Columns');
   }
 
   boot();
@@ -1345,9 +1369,13 @@ async function viewCompute(main) {
   const uPanel = el('section', { class: 'panel', style: { marginBottom: '20px' } });
   const kPanel = el('section', { class: 'panel', style: { marginBottom: '20px' } });
   const sPanel = el('section', { class: 'panel' });
-  main.append(cPanel, uPanel, kPanel, sPanel);
+  const bPanel = el('section', { class: 'panel', style: { marginBottom: '20px' } }, loading());
+  const iPanel = el('section', { class: 'panel', style: { marginBottom: '20px' } }, loading());
+  const isAdm = !!(CURRENT_USER && ['admin', 'super_admin'].includes(CURRENT_USER.role));
+  main.append(cPanel, uPanel, ...(isAdm ? [bPanel, iPanel] : []), kPanel, sPanel);
   clustersPanel(cPanel, uPanel);
-  if (!(CURRENT_USER && ['admin', 'super_admin'].includes(CURRENT_USER.role))) uPanel.hidden = true;
+  if (!isAdm) uPanel.hidden = true;
+  else { budgetsPanel(bPanel); invoicesPanel(iPanel); }
 
   async function loadKernels() {
     let ks = [], st = { kernels: {}, java: { count: 0, orphans: [], memory_mb: 0 } };
@@ -1438,7 +1466,10 @@ async function viewSql(main) {
   const runBtn = btn('Run', () => run(), { cls: 'primary', ic: 'play' });
   const cancelBtn = btn('Cancel', async () => { try { await api('/api/sql/cancel', { method: 'POST' }); } catch (e) { toast(e.message, 'err'); } }, { ic: 'stop', disabled: true });
   const main2 = el('div', { class: 'sql-main' },
-    el('div', { class: 'row' }, el('h1', { class: 'grow' }, 'SQL Editor'), limitSel, cancelBtn, runBtn),
+    el('div', { class: 'row' }, el('h1', { class: 'grow' }, 'SQL Editor'),
+      btn('Alert', () => { sessionStorage.setItem('databridge.alertPrefill', cm.getValue()); location.hash = '#/alert/new'; }, { ic: 'bell', title: 'Create an alert from this query' }),
+      btn('BI tools', () => biConnectDialog(), { ic: 'plug', title: 'Connect Power BI, Excel or Tableau' }),
+      limitSel, cancelBtn, runBtn),
     createDoraSqlBar(() => cm.getValue(), (sql) => { cm.setValue(sql); cm.focus(); }), edHost, status, out);
   main.append(el('div', { class: 'sql' }, side, main2));
 
@@ -1531,8 +1562,9 @@ let STATUS = {};
 let cleanup = null;
 const ROUTES = { home: viewHome, workspace: viewWorkspace, notebook: viewNotebook, catalog: viewCatalog,
   workflows: viewWorkflows, workflow: viewWorkflow, compute: viewCompute, sql: viewSql,
-  markets: viewMarkets, job: viewJob, jobedit: viewJobEdit, run: viewRun, pipelines: viewPipelines, pipeline: viewPipeline, prun: viewPipelineRun, admin: viewAdmin, dashboards: viewDashboards, dashboard: viewDashboard, logs: viewLogs, airflow: viewAirflow, datahub: viewDataHub };
-const NAV_FOR = { notebook: 'workspace', workflow: 'workflows', job: 'workflows', jobedit: 'workflows', run: 'workflows', pipeline: 'workflows', prun: 'workflows', pipelines: 'workflows', dashboard: 'dashboards', airflow: 'workflows' };
+  job: viewJob, jobedit: viewJobEdit, run: viewRun, pipelines: viewPipelines, pipeline: viewPipeline, prun: viewPipelineRun, admin: viewAdmin, dashboards: viewDashboards, dashboard: viewDashboard, logs: viewLogs, airflow: viewAirflow, datahub: viewDataHub };
+Object.assign(ROUTES, window.EXTRA_ROUTES || {});
+const NAV_FOR = { ...(window.EXTRA_NAV_FOR || {}), notebook: 'workspace', workflow: 'workflows', job: 'workflows', jobedit: 'workflows', run: 'workflows', pipeline: 'workflows', prun: 'workflows', pipelines: 'workflows', dashboard: 'dashboards', airflow: 'workflows' };
 
 function parseHash() {
   const h = location.hash.replace(/^#\/?/, '') || 'home';
@@ -1549,6 +1581,7 @@ async function render() {
     a.classList.toggle('active', on);
     on ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current');
   });
+  keepNavInView();
   const main = $('#main');
   main.className = '';
   main.replaceChildren();
@@ -1605,7 +1638,7 @@ async function boot() {
   document.querySelectorAll('[data-icon]').forEach((s) => s.replaceWith(icon(s.dataset.icon)));
   await authGate();
   document.body.classList.toggle('role-viewer', !!CURRENT_USER && CURRENT_USER.role === 'viewer');
-  if (CURRENT_USER && !['admin', 'super_admin'].includes(CURRENT_USER.role)) document.querySelectorAll('.nav[data-view="admin"]').forEach((n) => n.remove());
+  if (CURRENT_USER && !['admin', 'super_admin'].includes(CURRENT_USER.role)) document.querySelectorAll('.nav[data-view="admin"], .nav[data-view="governance"], .nav[data-admin]').forEach((n) => n.remove());
   await loadFeatures();
   const chip = authUserChip();
   if (chip) $('#conn-summary').before(chip);
@@ -1617,6 +1650,27 @@ async function boot() {
   setupSearch();
   setupNew();
   window.addEventListener('hashchange', render);
+  const wantNew = parseHash().params.get('create') === '1';           // "New" from the Overview pages' menu
+  if (wantNew) history.replaceState(null, '', `${location.pathname}${location.search}#/${parseHash().view}`);
   render();
+  if (wantNew) $('#new-btn').click();
+}
+
+/* the menu is taller than most screens: scroll the sidebar (only) so the current page's link is visible */
+function keepNavInView() {
+  const side = document.querySelector('.sidebar'), a = side && side.querySelector('.nav.active');
+  if (!a || side.scrollHeight <= side.clientHeight) return;
+  const top = a.offsetTop, bottom = top + a.offsetHeight;
+  if (top < side.scrollTop + 8) side.scrollTop = Math.max(0, top - 56);
+  else if (bottom > side.scrollTop + side.clientHeight - 8) side.scrollTop = bottom - side.clientHeight + 56;
+}
+
+/* hide a menu group's label when every link under it is hidden (feature flags, role) */
+function tidyNavSections() {
+  document.querySelectorAll('.sidebar .nav-sec').forEach((sec) => {
+    let n = sec.nextElementSibling, any = false;
+    while (n && n.classList.contains('nav')) { if (!n.hidden) { any = true; break; } n = n.nextElementSibling; }
+    sec.hidden = !any;
+  });
 }
 boot();

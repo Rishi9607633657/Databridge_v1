@@ -50,8 +50,12 @@ async function admHealth(main) {
 }
 
 const ADM_GROUPS = [
-  ['General', [['Server', 'gear', 'Port, sign-in, sessions and idle kernels'], ['Sign-up', 'user', 'Who can create an account and with which role'], ['Look & feel', 'spark', 'Design of the whole app (light / dark stays per user)']]],
-  ['AI', [['Dora (AI)', 'spark', 'The AI model used by Dora, Ask AI and dashboards'], ['Voice', 'play', 'Presenter voice (text to speech)']]],
+  ['General', [['Server', 'gear', 'Port, sign-in, sessions and idle kernels'], ['Sign-up', 'user', 'Who can create an account and with which role'],
+    ['Single sign-on', 'key', 'Sign in with Microsoft, Google, Okta or Keycloak'], ['Look & feel', 'spark', 'Design of the whole app (light / dark stays per user)']]],
+  ['Operations', [['Notifications', 'bell', 'E-mail (SMTP), Slack and Teams for alerts, budgets and data quality'], ['Jobs', 'flow', 'File-arrival triggers'],
+    ['Invoices', 'download', 'Your company details and tax on customer invoices']]],
+  ['Governance', [['Governance', 'shield', 'Table grants and column-mask salt'], ['BI tools', 'plug', 'OData feed for Power BI, Excel and Tableau']]],
+  ['AI', [['Dora (AI)', 'spark', 'The AI model used by Dora, Ask AI, Ask data and dashboards'], ['Machine learning', 'flask', 'MLflow tracking server and model serving'], ['Voice', 'play', 'Presenter voice (text to speech)']]],
   ['Data', [['Spark', 'cpu', 'Spark engine, dashboard query engine, start-up'], ['Catalog', 'db', 'Hive metastore / catalog backend'], ['Storage', 'folder', 'ADLS / cloud storage access'], ['Data Hub', 'hub', 'Syncs, real-time and event triggers'], ['Connectors', 'download', 'Connector library, branding and licence policy']]],
   ['Markets', [['Markets', 'chart', 'Indian stocks, mutual funds, forex and broker API keys']]],
   ['Integrations', [['Airflow', 'wind', 'Airflow connection for workflows'], ['Kubernetes', 'cpu', 'Kubernetes clusters for jobs']]],

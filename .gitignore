@@ -21,3 +21,5 @@ __pycache__/
 venv/
 dist/*
 packaging/*
+# Overview app (React) — build output is committed in frontend/overview
+ui/overview/node_modules/

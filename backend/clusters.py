@@ -11,6 +11,7 @@ Usage metering: every minute DataBridge records how many executors (≈ nodes) e
 per cluster / user / month = node-hours × price per node-hour × (1 + markup) — the basis for charging customers."""
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -46,7 +47,10 @@ SPOT_TAINTS = {"azure": ("kubernetes.azure.com/scalesetpriority", "spot"), "aws"
 
 DEFAULT = {"name": "", "cloud": "local", "node_type": "This machine", "vcpu": 4, "memory_gb": 16, "driver_memory": "2g",
            "min_workers": 0, "max_workers": 4, "spot": False, "auto_stop_minutes": 30, "node_pool": "spark",
-           "price_per_node_hour": 0.0, "markup_pct": 0.0, "currency": "₹", "spark_conf": {}, "tags": {}, "description": ""}
+           "price_per_node_hour": 0.0, "markup_pct": 0.0, "currency": "₹", "spark_conf": {}, "tags": {}, "description": "",
+           "pypi": [], "maven": [], "init_script": ""}
+_PIP = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-\[\],]*\s*(?:(?:==|>=|<=|~=|!=|>|<)\s*[A-Za-z0-9.*+!_\-]+\s*,?\s*)*$")
+_MVN = re.compile(r"^[\w.\-]+:[\w.\-]+:[\w.\-]+$")
 
 
 def _now():
@@ -87,6 +91,16 @@ def _clean(body):
     if not isinstance(s["spark_conf"], dict):
         raise HTTPException(400, "Spark settings must be key: value pairs")
     s["spark_conf"] = {str(k): str(v) for k, v in s["spark_conf"].items() if str(k).strip()}
+    for key, rx, what in (("pypi", _PIP, "PyPI package (e.g. xgboost==2.1.1)"), ("maven", _MVN, "Maven coordinate (group:artifact:version)")):
+        v = s.get(key) or []
+        if isinstance(v, str):
+            v = v.splitlines()
+        v = [x.strip() for x in v if x.strip() and not x.strip().startswith("#")]
+        bad = [x for x in v if not rx.match(x)]
+        if bad:
+            raise HTTPException(400, f"Not a valid {what}: {bad[0]}")
+        s[key] = v[:100]
+    s["init_script"] = str(s.get("init_script") or "")[:20000]
     return s
 
 
@@ -128,6 +142,13 @@ def _gb(x):
     return f"{max(1, int(x))}g"
 
 
+def _label_user(user):
+    """Kubernetes label value for a user name (max 63 chars of [A-Za-z0-9._-])."""
+    import re as _re
+    v = _re.sub(r"[^A-Za-z0-9._-]", "_", (user or "system").replace("@", "_at_"))[:63].strip("._-")
+    return v or "system"
+
+
 def spark_settings(c, app_name="databridge", user=""):
     """(master, conf) for a kernel attached to cluster c."""
     conf = {}
@@ -148,7 +169,7 @@ def spark_settings(c, app_name="databridge", user=""):
         **({"spark.kubernetes.container.image.pullSecrets": env("SPARK_IMAGE_PULL_SECRETS")} if env("SPARK_IMAGE_PULL_SECRETS") else {}),
         "spark.kubernetes.authenticate.driver.serviceAccountName": env("SPARK_SERVICE_ACCOUNT", "databridge-spark"),
         "spark.kubernetes.executor.label.databridge-cluster": c["id"],
-        "spark.kubernetes.executor.label.databridge-user": (user or "system")[:63].replace("@", "_at_"),
+        "spark.kubernetes.executor.label.databridge-user": _label_user(user),
         "spark.kubernetes.executor.deleteOnTermination": "true",
         "spark.kubernetes.executor.podNamePrefix": f"db-{c['id']}-{uuid.uuid4().hex[:6]}",
         "spark.driver.memory": c.get("driver_memory") or "2g",
@@ -199,12 +220,60 @@ def _pod_template(c):
     return p
 
 
+def lib_dir(pypi):
+    """Shared folder for a cluster's PyPI libraries (inside the workspace, so Kubernetes executors see it too)."""
+    import hashlib
+    from .settings import settings
+    h = hashlib.sha256("\n".join(sorted(pypi)).encode()).hexdigest()[:16]
+    return settings.workspace / ".libs" / h
+
+
+def ensure_libraries(pypi):
+    """pip install the cluster's packages into its shared folder once. Returns (path, message)."""
+    import subprocess
+    import sys
+    import shutil
+    d = lib_dir(pypi)
+    if (d / ".installed").exists():
+        return d, ""
+    tmp = d.with_name(d.name + ".tmp")
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True, exist_ok=True)
+    p = subprocess.run([sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--target", str(tmp), *pypi],
+                       capture_output=True, text=True, timeout=1800)
+    if p.returncode != 0:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise RuntimeError("Installing cluster libraries failed: " + (p.stderr or p.stdout)[-800:])
+    (tmp / ".installed").write_text("\n".join(pypi), encoding="utf-8")
+    shutil.rmtree(d, ignore_errors=True)
+    tmp.rename(d)
+    return d, f"Installed {len(pypi)} librar{'y' if len(pypi) == 1 else 'ies'}"
+
+
 def kernel_env(cid, app_name="databridge", user=""):
     """Environment for a kernel attached to cluster `cid` (consumed by config/spark_init.py)."""
     c = get(cid)
+    from . import budgets
+    reason = budgets.blocked_reason(c["id"], user)
+    if reason:
+        raise HTTPException(402, reason)
     master, conf = spark_settings(c, app_name, user)
-    return {"SPARK_MASTER": master, "STRATUM_SPARK_CONF": json.dumps(conf), "SPARK_APP_NAME": f"{app_name}"[:60],
-            "DATABRIDGE_CLUSTER_ID": c["id"], "DATABRIDGE_CLUSTER_USER": user or ""}
+    out = {"SPARK_MASTER": master, "STRATUM_SPARK_CONF": json.dumps(conf), "SPARK_APP_NAME": f"{app_name}"[:60],
+           "DATABRIDGE_CLUSTER_ID": c["id"], "DATABRIDGE_CLUSTER_USER": user or ""}
+    if c.get("pypi"):
+        d = lib_dir(c["pypi"])
+        out["DATABRIDGE_PIP_REQS"] = json.dumps(c["pypi"])
+        out["PYTHONPATH"] = str(d) + os.pathsep + os.environ.get("PYTHONPATH", "")
+        conf["spark.executorEnv.PYTHONPATH"] = str(d)
+        out["STRATUM_SPARK_CONF"] = json.dumps(conf)
+    if c.get("maven"):
+        out["SPARK_EXTRA_PACKAGES"] = ",".join([x for x in (os.environ.get("SPARK_EXTRA_PACKAGES") or "").split(",") if x.strip()] + c["maven"])
+    if (c.get("init_script") or "").strip():
+        f = DATA_ROOT / ".stratum" / "cluster_init" / f"{c['id']}.py"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(c["init_script"], encoding="utf-8")
+        out["DATABRIDGE_STARTUP_CODE_FILE"] = str(f)
+    return out
 
 
 # ------------------------------------------------------------------ usage metering
@@ -246,9 +315,11 @@ def meter_tick(kernel_sessions):
         cid = (ks.extra_env or {}).get("DATABRIDGE_CLUSTER_ID")
         if cid:
             _add_usage(day, cid, (ks.extra_env or {}).get("DATABRIDGE_CLUSTER_USER") or "system", kernel_min=1)
+    raw = {_label_user(ks.extra_env.get("DATABRIDGE_CLUSTER_USER") or "system"): ks.extra_env.get("DATABRIDGE_CLUSTER_USER") or "system"
+           for ks in kernel_sessions if ks.extra_env}
     for (cid, user), n in _running_executors().items():
-        if cid:
-            _add_usage(day, cid, user, exec_min=n)
+        if cid:                                  # pod labels hold a sanitised user name: map back to the real one
+            _add_usage(day, cid, raw.get(user, (user or "system").replace("_at_", "@")), exec_min=n)
 
 
 def usage(month=None):
@@ -259,7 +330,8 @@ def usage(month=None):
     for r in store.q("SELECT cluster_id, user, sum(kernel_minutes) AS km, sum(executor_minutes) AS em FROM cluster_usage "
                      "WHERE day LIKE ? GROUP BY cluster_id, user ORDER BY cluster_id, user", (f"{month}%",)):
         c = cl.get(r["cluster_id"]) or {"name": f"(deleted {r['cluster_id']})", "cloud": "", "price_per_node_hour": 0, "markup_pct": 0, "currency": "₹"}
-        node_hours = (r["em"] or 0) / 60.0
+        # Kubernetes clusters: node-hours = executor pod hours. "This machine": the hours a kernel was attached.
+        node_hours = ((r["km"] if c.get("cloud") == "local" else r["em"]) or 0) / 60.0
         base = node_hours * float(c["price_per_node_hour"] or 0)
         rows.append({"cluster_id": r["cluster_id"], "cluster": c["name"], "cloud": c["cloud"], "user": r["user"],
                      "attached_hours": round((r["km"] or 0) / 60.0, 2), "node_hours": round(node_hours, 2),

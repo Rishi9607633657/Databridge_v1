@@ -43,10 +43,10 @@ class KernelSession:
             raise
 
     async def _start(self):
-        from . import auth
+        from . import auth, ml
         env = {**os.environ, "STRATUM_ROOT": str(ROOT), "DATABRIDGE_DATA": str(DATA_ROOT), "DATABRIDGE_API_URL": f"http://127.0.0.1:{settings.port}",
-               "DATABRIDGE_API_TOKEN": auth.INTERNAL_TOKEN,
-               **self.extra_env}
+               "DATABRIDGE_API_TOKEN": auth.INTERNAL_TOKEN, "DATABRIDGE_KERNEL_LABEL": self.label or self.key,
+               "DATABRIDGE_KERNEL_KIND": self.kind, **ml.kernel_env(self.extra_env.get("DATABRIDGE_NOTEBOOK_PATH", "")), **self.extra_env}
         # every kernel (and the Spark driver JVM it starts) writes its console output to its own log file
         log_dir = DATA_ROOT / ".stratum" / "logs" / "kernels"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -55,6 +55,15 @@ class KernelSession:
         self._log_fh = open(self.log_path, "a", encoding="utf-8", errors="replace")
         self._log_fh.write(f"===== kernel {self.id} for {self.label} started {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
         self._log_fh.flush()
+        if self.extra_env.get("DATABRIDGE_PIP_REQS"):        # cluster libraries: install once into a shared folder
+            from . import clusters
+            self.init_status, self.init_message = "running", "Installing cluster libraries…"
+            try:
+                _, msg = await asyncio.to_thread(clusters.ensure_libraries, json.loads(self.extra_env["DATABRIDGE_PIP_REQS"]))
+                self._lib_message = msg
+            except Exception as e:  # noqa: BLE001
+                self._lib_message = str(e)[:600]
+                self._log_fh.write(f"{e}\n")
         await self.km.start_kernel(cwd=str(settings.workspace), env=env, stdout=self._log_fh, stderr=self._log_fh)
         self.kc = self.km.client()
         self.kc.start_channels()
@@ -90,6 +99,8 @@ class KernelSession:
                 self.init_message = f"{err.get('ename', '')}: {err.get('evalue', '')}"
         else:
             self.init_status = "skipped"
+        if getattr(self, "_lib_message", ""):
+            self.init_message = (self.init_message + "\n" + self._lib_message).strip()
         # Notebook runtime: %sql/%md/%run/%sh/%fs, display(), dbutils — loaded even if Spark failed
         if settings.runtime_file.exists():
             outputs.clear()
@@ -99,6 +110,15 @@ class KernelSession:
                 err = next((o for o in outputs if o["output_type"] == "error"), {})
                 self.init_message = (self.init_message + f"\nRuntime not loaded: {err.get('ename', '')}: "
                                                          f"{err.get('evalue', '')}").strip()
+        start_file = self.extra_env.get("DATABRIDGE_STARTUP_CODE_FILE")
+        if start_file and os.path.exists(start_file):               # the cluster's startup code (Compute › Clusters)
+            outputs.clear()
+            with open(start_file, encoding="utf-8") as fh:
+                code = fh.read()
+            status, _ = await self.execute(code, collect, silent=False, store_history=False, _init=True)
+            if status != "ok":
+                err = next((o for o in outputs if o["output_type"] == "error"), {})
+                self.init_message = (self.init_message + f"\nCluster startup code failed: {err.get('ename', '')}: {err.get('evalue', '')}").strip()
 
     async def execute(self, code, on_output=None, on_start=None, silent=False, store_history=True, _init=False):
         """Run code; stream outputs through on_output. Returns (status, execution_count)."""
@@ -314,6 +334,8 @@ class SqlError(Exception):
 async def run_sql(query: str, limit: int | None = None, key: str = SQL_KEY, label: str = "SQL Editor") -> dict:
     """Run one or more ';'-separated Spark SQL statements in a shared kernel; return the last result."""
     limit = limit or settings.sql_row_limit
+    from . import governance                         # grants, column masks, row filters for the person running it
+    query = await governance.apply(query, purpose="dashboard" if key != SQL_KEY else "sql")
     ks = await kernels.get_or_start(key, label)
     code = f"""
 if 'spark' not in globals():

@@ -374,8 +374,27 @@ async function viewJobEdit(main, r) {
     el('div', { class: 'grid2' }, f('Cron expression', cronIn, 'minute hour day-of-month month day-of-week'), f('Timezone', tzSel)),
     preview, el('label', { class: 'switch' }, pausedIn, 'Create schedule paused'));
   drawSched();
+  /* ---- file arrival trigger ---- */
+  const ft = job.file_trigger || {};
+  const fileOn = el('input', { type: 'checkbox', checked: !!ft.enabled });
+  const fileLoc = el('input', { class: 'field mono', value: ft.location || '', placeholder: 'D:\\landing\\sales   or   abfss://raw@myaccount.dfs.core.windows.net/sales   or   s3://bucket/sales' });
+  const filePat = el('input', { class: 'field mono', value: ft.pattern || '*.csv', placeholder: '*.csv' });
+  const fileWait = num(ft.wait_seconds ?? 60, 0);
+  const fileRec = el('input', { type: 'checkbox', checked: !!ft.recursive });
+  const fileConn = el('select', { class: 'field' }, el('option', { value: '' }, 'Path on the DataBridge server or cloud storage'));
+  api('/api/datahub/connections').then((cs) => (cs || []).filter((c) => ['sftp', 'folder'].includes(c.type)).forEach((c) =>
+    fileConn.append(el('option', { value: c.id, selected: c.id === ft.connection_id }, `Data Hub connection: ${c.name} (${c.type.toUpperCase()})`)))).catch(() => {});
+  const fileBody = el('div', { class: 'stack', style: { gap: '12px' } },
+    el('div', { class: 'grid2' }, f('Watch', fileConn), f('Folder', fileLoc, 'Local / network / mounted folder, ADLS Gen2 (abfss://), S3 or OCI Object Storage (s3://). Cloud keys come from Admin › Settings.')),
+    el('div', { class: 'grid3' }, f('Files (pattern)', filePat), f('Wait after the last file (seconds)', fileWait, 'Runs once when files stop arriving'), el('label', { class: 'switch', style: { alignSelf: 'end' } }, fileRec, 'Include sub-folders')),
+    el('p', { class: 'muted', style: { margin: 0, fontSize: '12.5px' } }, 'The job gets parameters trigger_files (JSON list of new files) and trigger_file_count — read them with dbutils.widgets.get("trigger_files"). Files already there when you switch this on are skipped.'),
+    job.file_trigger_status ? el('div', { class: 'muted', style: { fontSize: '12.5px' } }, `Watching ${job.file_trigger_status.seen} file(s) · ${job.file_trigger_status.pending} waiting · fired ${job.file_trigger_status.fired} time(s)`,
+      job.file_trigger_status.error ? el('div', { style: { color: 'var(--fail)' } }, job.file_trigger_status.error) : null) : null);
+  const drawFile = () => { fileBody.hidden = !fileOn.checked; };
+  fileOn.addEventListener('change', drawFile); drawFile();
   main.append(el('section', { class: 'panel form-panel', style: { marginTop: '24px' } }, el('h2', {}, 'Schedule & run settings'),
     el('label', { class: 'switch' }, schedOn, 'Run on a schedule'), schedBody,
+    el('label', { class: 'switch' }, fileOn, 'Run when new files arrive'), fileBody,
     el('div', { class: 'grid2' }, f('Max concurrent runs', maxConc), f('Job parameters (override task parameters)', jobParams, 'key=value per line'))));
 
   refresh();
@@ -385,6 +404,7 @@ async function viewJobEdit(main, r) {
       name: nameIn.value.trim(), description: descIn.value.trim(),
       schedule: schedOn.checked ? cronIn.value.trim() : null, timezone: tzSel.value, paused: pausedIn.checked,
       max_concurrent: Number(maxConc.value) || 1, parameters: parseKv(jobParams.value),
+      file_trigger: { enabled: fileOn.checked, location: fileLoc.value.trim(), pattern: filePat.value.trim(), wait_seconds: Number(fileWait.value) || 0, recursive: fileRec.checked, connection_id: fileConn.value || null },
       cluster: namedSel.value ? { cluster_id: namedSel.value } : {
         master: masterSel.value === '__custom' ? masterIn.value.trim() : masterSel.value,
         driver_memory: drvMem.value, executor_memory: exMem.value, executor_cores: Number(exCores.value) || 1,
@@ -426,7 +446,8 @@ async function viewJob(main, r) {
     el('h1', { style: { marginTop: '4px' } }, job.name),
     el('div', { class: 'muted', style: { fontSize: '13px', marginTop: '4px' } },
       [cronText(job.schedule, job.schedule ? job.timezone : null), job.schedule && !job.paused && job.next_run ? `next ${fmtTime(job.next_run)}` : null,
-        `cluster ${c.master || 'local[*]'}`, `${job.tasks.length} task${job.tasks.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ')),
+        job.file_trigger ? `when files arrive in ${job.file_trigger.location}` : null,
+        `cluster ${job.cluster_name || c.master || 'local[*]'}`, `${job.tasks.length} task${job.tasks.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ')),
     job.description ? el('div', { style: { fontSize: '13px', marginTop: '4px' } }, job.description) : null),
   jobPauseSwitch(job),
   btn('', del, { cls: 'ghost icon', ic: 'trash', title: 'Delete job' }),
@@ -463,7 +484,7 @@ async function viewJob(main, r) {
     for (const rn of runs) tb.append(el('tr', { class: 'clickable', onClick: () => (location.hash = `#/run/${rn.id}`) },
       el('td', { style: { fontWeight: 600 } }, `#${rn.run_number}`), el('td', {}, stateEl(rn.state)),
       el('td', { class: 'muted' }, tsTime(rn.start)), el('td', { class: 'muted' }, secs(rn.duration)),
-      el('td', { class: 'muted' }, rn.trigger === 'schedule' ? 'Scheduled' : rn.trigger === 'manual' ? 'Manual' : rn.trigger),
+      el('td', { class: 'muted' }, rn.trigger === 'schedule' ? 'Scheduled' : rn.trigger === 'manual' ? 'Manual' : rn.trigger === 'file_arrival' ? 'New files' : rn.trigger),
       el('td', { class: 'mono muted', style: { fontSize: '11.5px', maxWidth: '260px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
         Object.keys(rn.parameters || {}).length ? kvText(rn.parameters).replace(/\n/g, ', ') : '—'),
       el('td', { class: 'muted', style: { fontSize: '12px', maxWidth: '280px' } }, rn.message || '')));
@@ -592,7 +613,7 @@ async function viewRun(main, r) {
       adhoc ? el('div', { class: 'mono', style: { fontSize: '13px', marginTop: '4px' } },
         el('a', { href: `#/notebook?path=${enc(run.job.name)}` }, run.job.name), run.parent ? el('span', { class: 'muted' }, `  ← called from ${run.parent}`) : null) : null,
       el('div', { class: 'muted', style: { fontSize: '13px', marginTop: '4px' } },
-        `${run.trigger === 'schedule' ? 'Scheduled' : run.trigger === 'notebook_run' ? 'dbutils.notebook.run' : 'Manual'} · started ${tsTime(run.start)} · ${active ? 'running for' : 'took'} ${secs(run.duration)} · cluster ${(run.cluster || {}).master || 'local[*]'}`),
+        `${run.trigger === 'schedule' ? 'Scheduled' : run.trigger === 'notebook_run' ? 'dbutils.notebook.run' : run.trigger === 'file_arrival' ? 'New files arrived' : 'Manual'} · started ${tsTime(run.start)} · ${active ? 'running for' : 'took'} ${secs(run.duration)} · cluster ${run.cluster_name || (run.cluster || {}).master || 'local[*]'}`),
       Object.keys(run.parameters || {}).length ? el('div', { class: 'row', style: { gap: '6px', marginTop: '8px', flexWrap: 'wrap' } },
         Object.entries(run.parameters).map(([k, v]) => el('span', { class: 'chip mono', style: { fontWeight: 500 } }, `${k}=${v}`))) : null,
       run.message ? el('div', { class: run.state === 'FAILED' ? 'error-box' : 'muted', style: { marginTop: '10px', fontSize: '13px' } }, run.message) : null),

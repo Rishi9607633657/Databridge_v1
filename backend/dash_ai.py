@@ -16,11 +16,52 @@ from .kernels import SqlError, run_sql
 
 DASH_KERNEL = "__dashboards__"
 NUM_TYPES = ("int", "bigint", "smallint", "tinyint", "double", "float", "decimal", "long", "short")
-CHART_TYPES = {"kpi", "bar", "hbar", "line", "area", "pie", "funnel", "table", "panel", "insights", "text"}
+CHART_TYPES = {"kpi", "bar", "hbar", "line", "area", "pie", "funnel", "scatter", "heatmap", "sankey", "map", "twin3d", "table", "panel", "insights", "text",
+               "rank", "catlist", "globe"}
 SUB_TYPES = {"kpi", "bar", "hbar", "line", "area", "pie", "funnel"}
 AGGS = {"sum", "avg", "count", "countd", "min", "max", "none"}
 FORMATS = {"compact", "currency_compact", "currency", "number", "integer", "percent"}
 OPS = {"eq", "neq", "in", "gt", "gte", "lt", "lte", "contains"}
+GRAINS = {"day", "week", "month", "quarter", "year"}
+PARAM_RE = re.compile(r"\{\{\s*[A-Za-z_]\w*\s*\}\}")
+MAX_BIG = 60_000                                           # rows a summary dataset may return (dashboards.MAX_BIG)
+LOOKS = {"vivid", "clean", "porcelain", "sandstone", "graphite", "ocean", "midnight", "glass-light", "liquid", "executive", "holo", "aurora", "corporate",
+         "material", "glass", "liquid-light", "neo", "neo-dark", "clay", "clay-peach", "cyberpunk", "nord", "dracula", "terminal", "emerald",
+         "sunset", "solarized", "candy", "minimal", "paper", "brutal"}
+KPI_STYLES = {"icon", "clean", "tiles", "gauge", "ring", "minimal"}
+MODES = {"overview", "clean", "motion", "3d"}
+MODE_LOOK = {"overview": "vivid", "clean": "vivid", "motion": "graphite", "3d": "holo"}
+GEO_COUNTRY = re.compile(r"(^|_)(country|nation)(_name|_code)?$", re.I)
+GEO_STATE = re.compile(r"(^|_)(state|province)(_name|_code)?$", re.I)
+GEO_CITY = re.compile(r"(^|_)(city|town|district)(_name)?$", re.I)
+GEO_LAT = re.compile(r"^(lat|latitude)$", re.I)
+GEO_LON = re.compile(r"^(lon|lng|long|longitude)$", re.I)
+SITE = re.compile(r"(^|_)(outlet|store|site|branch|shop|restaurant|warehouse|building|plant|hotel|clinic|school|location)(_name)?$", re.I)
+FROM_RE = re.compile(r"^(from|source|origin|src|sender)(_|$)|_(from|source|origin)$", re.I)
+TO_RE = re.compile(r"^(to|target|destination|dest|dst|receiver)(_|$)|_(to|target|destination|dest)$", re.I)
+WEEKDAY = re.compile(r"weekday|day_of_week|(^|_)dow$|day_name", re.I)
+HOUR = re.compile(r"(^|_)(hour|hr|hour_of_day)$", re.I)
+TIME_PART = re.compile(r"(^|_)(hour|hr|weekday|dow|day_of_week|week|week_no|month_no|quarter|day_of_month)$", re.I)
+IN_STATES = {"maharashtra", "karnataka", "delhi", "tamil nadu", "telangana", "gujarat", "west bengal", "uttar pradesh", "rajasthan", "kerala",
+             "madhya pradesh", "haryana", "punjab", "bihar", "odisha", "assam", "goa", "andhra pradesh", "jharkhand", "chhattisgarh", "uttarakhand",
+             "himachal pradesh", "jammu and kashmir", "chandigarh", "puducherry", "ladakh"}
+US_STATES = {"california", "texas", "florida", "new york", "illinois", "pennsylvania", "ohio", "georgia", "washington", "arizona", "massachusetts",
+             "colorado", "michigan", "virginia", "new jersey", "north carolina", "tennessee", "oregon", "nevada", "utah", "ca", "tx", "fl", "ny", "il",
+             "pa", "oh", "ga", "wa", "az", "ma", "co", "mi", "va", "nj", "nc", "tn", "or", "nv", "ut"}
+
+
+def _nice(name):
+    """column name -> words people use: margin_pct -> Margin %, avg_ticket -> Avg ticket"""
+    s = re.sub(r"\s+", " ", str(name or "").replace("_", " ")).strip()
+    s = re.sub(r"\b(pct|percent)\b", "%", s, flags=re.I)
+    s = re.sub(r"\bqty\b", "quantity", s, flags=re.I)
+    s = re.sub(r"\bamt\b", "amount", s, flags=re.I)
+    return s[:1].upper() + s[1:]
+
+
+def _avg_title(name):
+    n = _nice(name)
+    return n if re.match(r"(avg|average|mean)\b", n, re.I) else f"Avg {n[:1].lower() + n[1:]}"
 
 TEMPLATE = """Goal: (what decisions should this dashboard support?)
 Audience: (owner / sales team / operations / finance)
@@ -124,6 +165,10 @@ def _kind(name, typ, distinct, n, examples):
     if typ.startswith("string") and examples and all(re.match(r"^\d{4}-\d{2}-\d{2}", e) for e in examples):
         return "date"
     if any(typ.startswith(t) for t in NUM_TYPES):
+        if GEO_LAT.match(lname) or GEO_LON.match(lname):
+            return "id"                                    # coordinates: used by maps, never added up
+        if TIME_PART.search(lname) and distinct and distinct <= 60:
+            return "cat"                                   # hour of day, weekday number: a category to group by, not a measure
         metric = re.search(r"amount|sales|revenue|value|price|total|cost|qty|quantity|count|profit|discount|fee|tax|score|balance|spend", lname)
         if re.search(r"(^|_)(id|key|code|zip|pin|year|month|day)$", lname):
             return "id"
@@ -161,13 +206,20 @@ SYSTEM = """You design business dashboards for DataBridge. Return ONLY one JSON 
 JSON shape:
 {"name": str, "description": str,
  "period": {"preset": "last_7_days|last_week|last_14_days|last_30_days|this_month|last_month|all", "compare": true},
- "style": {"look": "ocean|midnight|aurora|clean", "kpiStyle": "gradient|gauge|spark|tinted", "fitScreen": true, "kpiLayout": "row|beside_insights"},
+ "style": {"look": "vivid|clean|porcelain|sandstone|graphite|ocean|midnight|glass-light|liquid|executive|holo", "kpiStyle": "icon|clean|tiles|gauge|ring|minimal",
+           "motion": "off|subtle|cinematic", "dim": "2d|3d", "fitScreen": false, "kpiLayout": "row|beside_insights"},
  "pages": [{"id": "p1", "name": "Overview"}],
  "datasets": [{"id": "ds1", "name": str, "sql": "Spark SQL", "timeColumn": "date/timestamp column or null"}],
  "filters": [{"label": str, "type": "select|multiselect|text", "dataset": "ds1", "column": str}],
  "widgets": [{
-   "type": "kpi|bar|hbar|line|area|pie|funnel|table|panel|insights|text", "page": "p1", "title": str,
-   "kpiStyle": "gradient|gauge|spark|tinted (optional, per KPI)", "target": "number for gauges (optional)", "heat": true, "totals": true,
+   "type": "kpi|bar|hbar|line|area|pie|funnel|scatter|heatmap|sankey|map|twin3d|rank|catlist|globe|table|panel|insights|text", "page": "p1", "title": str,
+   "kpiStyle": "icon|clean|tiles|gauge|ring|minimal (optional, per KPI)", "target": "number for gauges (optional)", "heat": true, "totals": true,
+   "dim": "2d|3d (bar, hbar, line, area, pie, funnel, heatmap, scatter)", "play": "date column: play over time (bar/hbar race, pie, funnel, scatter, flat map); for line/area use play = x to draw the line",
+   "playGrain": "day|week|month|quarter|year", "playCum": true, "pieStyle": "donut|pie|rose|rings",
+   "target": "destination column for sankey and map flows", "sizeBy": "numeric column for bubble size (scatter)", "color": "column for colour (scatter, map, twin3d)",
+   "label": "one bubble per this column (scatter)", "map": "world|india|usa", "geo": "region|place|latlon", "view": "flat|3d|globe", "lat": str, "lon": str,
+   "hint": "state/country column that disambiguates city names", "twin": "building|campus",
+   "zone": "globe only: region column for its region list (country, state or city)", "city": str, "state": str, "country": str,
    "dataset": "ds1", "x": "column or null", "y": ["numeric column"], "agg": "sum|avg|count|countd|min|max",
    "series": "category column or null", "sort": "label|value_desc|value_asc", "top": 0,
    "format": "compact|currency_compact|integer|percent|number", "lowerBetter": false,
@@ -197,11 +249,25 @@ Rules:
 - Unless asked otherwise, design a FULL ONE-PAGE dashboard that fits one screen: style.fitScreen true, 6 KPI cards
   (style.kpiLayout "row" = all 6 across the top; "beside_insights" = insights at the left with 3+3 KPIs beside it),
   then 6-9 charts in rows (XS = 4 per row, S = 3 per row), and put long tables on a second page.
-- style.look: "ocean" (light blue, business), "midnight" (dark navy, operations/support), "aurora" (purple, marketing/product), "clean".
-  style.kpiStyle: "gradient" (colourful tiles), "gauge" (progress against a target, e.g. CSAT, SLA %, utilisation),
-  "spark" (number + trend line). Individual KPIs may override with their own kpiStyle (e.g. a gauge for a percentage KPI).
+- style.look: "vivid" (default: white cards on pale blue-grey, colourful icon KPIs), "ocean" (light blue, business), "midnight" (dark navy,
+  operations/support), "aurora" (purple, marketing/product), "clean".
+  style.kpiStyle: "icon" (default: gradient icon tile, number, change and trend bars), "tiles" (colourful tiles), "gauge" (progress
+  against a target, e.g. CSAT, SLA %, utilisation), "clean" (number + trend line). Individual KPIs may override with their own
+  kpiStyle (e.g. a gauge for a percentage KPI).
 - "funnel" shows ordered stages (impressions > clicks > leads, created > resolved > closed) — x = stage column, y = count.
 - Tables: "heat": true colours numbers by size, "totals": true adds a totals row.
+- "rank" is a top list (x = the item, e.g. store; top 8) with bars and the change vs the previous period; "catlist" lists categories with an
+  icon, bar and share; "globe" (size L) shows locations on a 3D globe: x = the location (store / outlet / city), zone = the region column,
+  plus city / state / country (or lat + lon) so it can place them.
+- Clean and uncluttered: rankings are "hbar" (sort value_desc, top 10); at most one donut per page and only for <= 6 slices; titles in plain words
+  ("Avg ticket", "Margin %"), never column names with underscores.
+- Places (country / state / city columns, or lat + lon) -> a "map" (x = the place column; geo "place" for cities, "region" for states/countries;
+  map "india" / "usa" / "world"). From -> to columns -> "sankey", or a "map" with "target" when both are places (view "globe" for countries).
+  Weekday x hour (or two short categories) -> "heatmap" (x = columns, series = rows). Comparing sites/products on two measures -> "scatter".
+  Floor x zone data -> "twin3d" building; a set of sites in 3D -> "twin3d" campus.
+- Motion (style.motion "cinematic" or the user asks for animation): give the main ranking "play" = the date column (a bar race) and the main trend play = x.
+- 3D (style.dim "3d" or the user asks for 3D): set "dim": "3d" on the donut, the funnel, one comparison bar chart and the heatmap; map view "3d" for
+  states or "globe" for countries / flows; add a "twin3d" campus for sites. Keep KPI cards and the main trend in 2D so they stay readable.
 - If the user specified something, follow it exactly; decide the rest yourself for a clean, uncluttered dashboard."""
 
 
@@ -227,7 +293,7 @@ def _grain(p):
     return f"one row per {keys[0]}" if keys else "no unique key column"
 
 
-async def llm_plan(prompt, profiles, rels=None, ctx=None):
+async def llm_plan(prompt, profiles, rels=None, ctx=None, style=None):
     ctx = ctx or {}
     schema = [{"table": p["table"], "rows": p["rows"], "grain": _grain(p),
                "columns": [{k: c.get(k) for k in ("name", "type", "kind", "distinct", "min", "max", "examples", "values") if c.get(k) is not None} for c in p["columns"]]}
@@ -242,6 +308,14 @@ async def llm_plan(prompt, profiles, rels=None, ctx=None):
         parts.append("Metric definitions (use EXACTLY these formulas; compute them as columns in the dataset SQL, e.g. SUM(a) - SUM(b) AS metric, "
                      "and name the KPI with the metric name):\n" + "\n".join(f"- {m['name']}: {m['definition']}" for m in ctx["metrics"]))
     parts.append(f"Size: design {DENSITY.get(ctx.get('density') or 'standard')}.")
+    if style and style.get("mode") in MODES:
+        parts.append({"clean": "Look: clean and calm, 2D charts, subtle motion.",
+                      "motion": "Look: animated — bar races and lines that draw over time (style.motion cinematic).",
+                      "3d": "Look: a 3D showcase (style.dim 3d) — 3D donut, funnel, bars, heatmap landscape, 3D map or globe, campus of sites.",
+                      "overview": "Look: a business overview like the DataBridge AI Overview — one row of 4-5 KPI cards (kpiStyle icon) on the "
+                                  "headline measures, then a 3D globe of the places (map view \"globe\") next to the main trend over time, then "
+                                  "a top-10 ranking of sites, a donut of the main share, a category bar chart and, when there are sites, a 3D "
+                                  "campus (twin3d) where building height = the main measure. Keep everything except the globe and campus 2D."}[style["mode"]])
     parts.append(f"Request:\n{prompt}")
     msgs = [{"role": "system", "content": SYSTEM + ACCURACY}, {"role": "user", "content": "\n\n".join(p for p in parts if p)}]
     text = await assistant.complete(msgs, max_tokens=7000)
@@ -329,7 +403,8 @@ def _summary_sql(src, date_col, cats, nums, limit=4500):
             break
     keys = ([f"CAST(`{date_col['name']}` AS DATE) AS `{date_col['name']}`"] if date_col else []) + [f"`{c['name']}`" for c in keep]
     group = ", ".join(str(i + 1) for i in range(len(keys)))
-    measures = ", ".join([f"SUM(`{n['name']}`) AS `{n['name']}`" for n in nums[:6]] + ["COUNT(*) AS `records`"])
+    avg_like = re.compile(r"score|rating|csat|nps|satisf|minute|duration|time|days?$|age|rate|ratio|pct|percent|price|temp|avg|mean|speed|latency|sla|ticket|occupancy", re.I)
+    measures = ", ".join([f"{'AVG' if avg_like.search(n['name']) else 'SUM'}(`{n['name']}`) AS `{n['name']}`" for n in nums[:6]] + ["COUNT(*) AS `records`"])
     return f"SELECT {', '.join(keys)}{', ' if keys else ''}{measures}\nFROM {src}" + (f"\nGROUP BY {group}" if keys else ""), keep, est
 
 
@@ -339,7 +414,24 @@ def _mentioned(prompt, cols):
     return [c for c in cols if c["name"].lower().replace("_", " ") in low]
 
 
-def rule_plan(prompt, profiles, rels=None, density="standard"):
+def _geo_map(c, cols):
+    """which built-in map a place column belongs on (world / india / usa)"""
+    vals = {str(v).strip().lower() for v in (c.get("values") or []) + (c.get("examples") or [])}
+    country = next((x for x in cols if GEO_COUNTRY.search(x["name"])), None)
+    cvals = {str(v).strip().lower() for v in ((country or {}).get("values") or []) + ((country or {}).get("examples") or [])}
+    if GEO_COUNTRY.search(c["name"]):
+        return "world"
+    if vals & IN_STATES or cvals & {"india", "in"}:
+        return "india"
+    if vals & US_STATES or cvals & {"usa", "us", "united states", "united states of america"}:
+        return "usa"
+    return "india" if GEO_STATE.search(c["name"]) and not vals else "world"
+
+
+def rule_plan(prompt, profiles, rels=None, density="standard", style=None):
+    style = style or {}
+    mode = style.get("mode") if style.get("mode") in MODES else "clean"
+    want3d, motion, ov = mode == "3d", mode == "motion", mode == "overview"
     low = prompt.lower()
     pages = [{"id": "p1", "name": "Overview"}]
     datasets, widgets, filters = [], [], []
@@ -347,7 +439,6 @@ def rule_plan(prompt, profiles, rels=None, density="standard"):
     by_table = {p["table"]: p for p in profiles}
     lookups = {r["to"] for r in rels}
     facts = [p for p in profiles if any(c["kind"] == "num" for c in p["columns"]) and (p["table"] not in lookups or any(c["kind"] == "date" for c in p["columns"]))] or profiles
-    want_details = True
     for ti, p in enumerate(facts):
         ds = f"ds{ti + 1}"
         src, joined = _source(p, rels, by_table)
@@ -359,12 +450,18 @@ def rule_plan(prompt, profiles, rels=None, density="standard"):
         money_first = lambda c: (0 if re.search(r"net_?sales|revenue|sales|amount|gmv|turnover|profit|value|total", c["name"], re.I) else 1)  # noqa: E731
         nums = [c for c in ment if c["kind"] == "num"] + sorted([c for c in nums if c not in ment], key=money_first)
         cats = [c for c in ment if c["kind"] == "cat"] + [c for c in cats if c not in ment]
+        # place columns (cities, states, countries) and lat/lon are useful even with many values
+        places = [c for c in cols if c["kind"] in ("cat", "text") and (GEO_CITY.search(c["name"]) or GEO_STATE.search(c["name"]) or GEO_COUNTRY.search(c["name"]))]
+        lat = next((c for c in cols if GEO_LAT.match(c["name"]) and c["kind"] in ("num", "id")), None)
+        lon = next((c for c in cols if GEO_LON.match(c["name"]) and c["kind"] in ("num", "id")), None)
         tname = p["table"].split(".")[-1].replace("_", " ")
         records_col = None
         if p["rows"] > 5000 and (nums or cats):
             sql, kept, est = _summary_sql(src, dates[0] if dates else None, cats, nums)
             kept_names = {c["name"] for c in kept}
-            cats = [c for c in cats if c["name"] in kept_names] + [c for c in cats if c["name"] not in kept_names][:0]
+            cats = [c for c in cats if c["name"] in kept_names]
+            places = [c for c in places if c["name"] in kept_names]
+            lat = lon = None
             nums = nums[:6]
             records_col = "records"
             datasets.append({"id": ds, "name": f"{tname} · daily summary" if dates else f"{tname} · summary", "sql": sql,
@@ -377,121 +474,204 @@ def rule_plan(prompt, profiles, rels=None, density="standard"):
             sql = f"SELECT * FROM {src}" if src != p["table"] else f"SELECT * FROM {p['table']}"
             datasets.append({"id": ds, "name": tname, "sql": sql, "timeColumn": dates[0]["name"] if dates else None,
                              "purpose": f"All {p['rows']:,} rows{' with ' + ', '.join(c['name'] for c in joined) + ' from related tables' if joined else ''}."})
-        nice = lambda c: c["name"].replace("_", " ").strip().capitalize()  # noqa: E731
-        money = lambda c: bool(re.search(r"amount|sales|revenue|price|value|total|cost|discount|refund|fee|tax|profit", c["name"], re.I))  # noqa: E731
+        money = lambda c: bool(re.search(r"amount|sales|revenue|price|value|total|cost|discount|refund|fee|tax|profit|ticket|spend", c["name"], re.I))  # noqa: E731
         lower = lambda c: bool(re.search(r"discount|refund|cost|return|void|cancel|churn|delay", c["name"], re.I))  # noqa: E731
+
+        def avg_fmt(c):
+            """format for an averaged measure: % for 0–1 ratios, ₹ for money, else compact"""
+            try:
+                top = float(c.get("max"))
+            except (TypeError, ValueError):
+                top = None
+            if re.search(r"pct|percent|rate|ratio|share|margin|occupancy", c["name"], re.I) and top is not None and top <= 1.0:
+                return "percent"
+            return "currency" if money(c) else "compact"
         page = "p1" if ti == 0 else f"p{ti + 1}"
         if ti > 0:
-            pages.append({"id": page, "name": nice({"name": p["table"].split(".")[-1]})})
-        # ---- semantics: which measures add up, which must be averaged
-        avg_like = lambda c: bool(re.search(r"score|rating|csat|nps|satisf|hour|minute|min$|duration|time|days?$|age|rate|ratio|pct|percent|price|temp|avg|mean|speed|latency|sla", c["name"], re.I))  # noqa: E731
+            pages.append({"id": page, "name": _nice(p["table"].split(".")[-1])})
+        avg_like = lambda c: bool(re.search(r"score|rating|csat|nps|satisf|minute|min$|duration|time|days?$|age|rate|ratio|pct|percent|price|temp|avg|mean|speed|latency|sla|ticket|occupancy", c["name"], re.I))  # noqa: E731
         add_m = [c for c in nums if not avg_like(c)]
         avg_m = [c for c in nums if avg_like(c)]
         main = add_m[0] if add_m else None
         count_y = records_col or cols[0]["name"]
         count_agg = "sum" if records_col else "count"
         noun = tname.split(" ·")[0].strip().title() or "Records"
-        main_y, main_agg, main_title, main_fmt = ([main["name"]], "sum", nice(main), "compact") if main else ([count_y], count_agg, noun, "integer")
-        stage = next((c for c in cats if re.search(r"stage|status|step|funnel|phase|state", c["name"], re.I) and 2 <= c["distinct"] <= 10), None)
+        if not noun.lower().endswith("s") or any(re.search(rf"\b{re.escape(c['name'].split('_')[0])}\b", noun, re.I) for c in nums[:3]):
+            noun = "Records"                               # "Daily sales" or "Outlet geo" counted is a number of rows
+        main_y, main_agg, main_title, main_fmt = ([main["name"]], "sum", _nice(main["name"]), "currency_compact" if money(main) else "compact") if main else ([count_y], count_agg, noun, "integer")
+        stage = next((c for c in cats if re.search(r"stage|status|step|funnel|phase", c["name"], re.I) and 2 <= c["distinct"] <= 10), None)
+        frm = next((c for c in cats + places if FROM_RE.search(c["name"])), None)
+        to = next((c for c in cats + places if TO_RE.search(c["name"])), None)
+        wday = next((c for c in cats if WEEKDAY.search(c["name"])), None)
+        hour = next((c for c in cats if HOUR.search(c["name"])), None)
+        site = next((c for c in cats + [c for c in cols if c["kind"] == "text"] if SITE.search(c["name"]) and 3 <= c["distinct"] <= 200), None)
+        floor = next((c for c in cats if re.search(r"(^|_)(floor|level|storey)$", c["name"], re.I)), None)
+        zone = next((c for c in cats if re.search(r"(^|_)(zone|room|area|wing|section|bay)$", c["name"], re.I)), None)
+        special = {id(x) for x in (stage, frm, to, wday, hour, floor, zone) if x} | {id(x) for x in places}
+        dims = [c for c in cats if id(c) not in special and c is not site]
+        # ---- KPI cards
         kpis = []
         for c in add_m[:3]:
-            kpis.append({"title": nice(c), "y": [c["name"]], "agg": "sum", "format": "currency_compact" if money(c) else "compact", "lowerBetter": lower(c)})
-        kpis.append({"title": noun, "y": [count_y], "agg": count_agg, "format": "integer"})
+            kpis.append({"title": _nice(c["name"]), "y": [c["name"]], "agg": "sum", "format": "currency_compact" if money(c) else "compact", "lowerBetter": lower(c)})
+        if noun != "Records" or not add_m:                 # a count of rows only when it means something (orders, tickets, customers)
+            kpis.append({"title": noun, "y": [count_y], "agg": count_agg, "format": "integer"})
         for c in avg_m[:3]:
-            top = c.get("max")
             try:
-                top = float(top)
+                top = float(c.get("max"))
             except (TypeError, ValueError):
                 top = None
-            gauge = bool(re.search(r"score|rating|csat|nps|satisf|pct|percent|rate|sla", c["name"], re.I)) and top is not None and top <= 100
-            kpis.append({"title": f"Avg {c['name'].replace('_', ' ')}", "y": [c["name"]], "agg": "avg", "format": "compact",
-                         "lowerBetter": bool(re.search(r"hour|minute|time|duration|days|latency|wait|delay", c["name"], re.I)),
-                         **({"kpiStyle": "gauge", "target": 5 if top <= 5 else 10 if top <= 10 else 100} if gauge else {"kpiStyle": "spark"})})
-        if main and money(main) and not records_col:          # a true per-row average needs row-level data
-            kpis.append({"title": f"{main_title} per {noun.rstrip('s').lower()}", "y": [main["name"]], "agg": "avg", "format": "currency_compact", "kpiStyle": "spark"})
+            gauge =bool(re.search(r"score|rating|csat|nps|satisf|sla", c["name"], re.I)) and top is not None and top <= 100
+            k = {"title": _avg_title(c["name"]), "y": [c["name"]], "agg": "avg", "format": avg_fmt(c),
+                 "lowerBetter": bool(re.search(r"hour|minute|time|duration|days|latency|wait|delay", c["name"], re.I))}
+            if gauge:
+                k.update({"kpiStyle": "gauge", "target": 5 if top <= 5 else 10 if top <= 10 else 100})
+            kpis.append(k)
+        if ov:
+            for c in [x for x in (site, next((c for c in places if GEO_CITY.search(c["name"])), None), next((c for c in places if GEO_COUNTRY.search(c["name"])), None)) if x]:
+                if c["distinct"] >= 2 and not records_col:
+                    plural = _nice(c["name"]) if c["name"].endswith("s") else _nice(c["name"])[:-1] + "ies" if re.search(r"[^aeiou]y$", c["name"], re.I) else f"{_nice(c['name'])}s"
+                    kpis.insert(min(len(kpis), 2), {"title": plural, "y": [c["name"]], "agg": "countd", "format": "integer"})
         if stage:
             vals = [str(v) for v in (stage.get("values") or stage.get("examples") or [])]
             final = [v for v in vals if v.lower() in ("closed", "resolved", "completed", "done", "delivered", "won", "paid", "shipped", "converted")]
-            for v in (final or ["Closed", "Resolved"])[:2]:
+            for v in final[:2]:
                 kpis.append({"title": f"{v} {noun.lower()}", "y": [count_y], "agg": count_agg, "format": "integer", "where": [{"column": stage["name"], "op": "eq", "value": v}]})
         seen_t = set()
         for k in kpis:
-            if len([x for x in widgets if x["type"] == "kpi" and x["page"] == page]) >= 6 or k["title"] in seen_t:
+            if len([x for x in widgets if x["type"] == "kpi" and x["page"] == page]) >= (4 if density == "compact" else 5 if ov else 6) or k["title"] in seen_t:
                 continue
             seen_t.add(k["title"])
             widgets.append({"type": "kpi", "page": page, "dataset": ds, **k})
-        # ---- charts, ordered to fill rows: [insights S | trend L] [funnel S | share S | average S] [breakdown M | compare M]
-        if dates and ti == 0:
-            widgets.append({"type": "insights", "page": page, "title": "Smart insights", "size": "S"})
+        charts = []
+        # ---- trend over time (draws itself in motion style)
         if dates:
-            widgets.append({"type": "area" if "area" in low else "line", "page": page, "title": f"{main_title} over time", "dataset": ds,
-                            "x": dates[0]["name"], "y": main_y, "agg": main_agg, "format": main_fmt, "size": "L" if ti == 0 else "M",
-                            "ml": {"forecast": 7 if ("forecast" in low or ti == 0) else 0, "anomalies": True, "trend": "trend" in low},
-                            "filterControls": [cats[0]["name"]] if cats else []})
+            if ti == 0 and not ov:
+                widgets.append({"type": "insights", "page": page, "title": "What changed", "size": "S"})
+            charts.append({"type": "area" if "line" not in low else "line", "title": f"{main_title} over time", "x": dates[0]["name"], "y": main_y, "agg": main_agg,
+                           "format": main_fmt, "size": "L" if ti == 0 and not ov else "M", "ml": {"forecast": 7 if ("forecast" in low or ti == 0) else 0, "anomalies": True, "trend": "trend" in low},
+                           **({"play": dates[0]["name"]} if motion else {})})
+        # ---- places on a map (3D map or globe in the 3D style)
+        if (places or (lat and lon)) and main:
+            pc = next((c for c in places if GEO_CITY.search(c["name"])), None) or next((c for c in places if GEO_STATE.search(c["name"])), None) or (places[0] if places else None)
+            if frm and to and (frm in places or GEO_COUNTRY.search(frm["name"]) or GEO_CITY.search(frm["name"])):
+                charts.append({"type": "map", "title": f"{main_title}: {_nice(frm['name']).lower()} → {_nice(to['name']).lower()}", "x": frm["name"], "target": to["name"],
+                               "y": main_y, "agg": main_agg, "format": main_fmt, "map": _geo_map(frm, cols), "view": "globe" if want3d or GEO_COUNTRY.search(frm["name"]) else "flat", "size": "M"})
+                frm = to = None
+            elif pc is not None:
+                state_col = next((c for c in places if GEO_STATE.search(c["name"])), None)
+                m = {"type": "map", "title": f"{main_title} by {_nice(pc['name']).lower()}", "x": pc["name"], "y": main_y, "agg": main_agg, "format": main_fmt,
+                     "map": _geo_map(pc, cols), "geo": "place" if GEO_CITY.search(pc["name"]) else "region", "size": "M"}
+                if state_col and state_col is not pc:
+                    m["hint"] = state_col["name"]
+                if avg_m and GEO_CITY.search(pc["name"]):
+                    m["color"] = avg_m[0]["name"]
+                if ov:
+                    m["view"] = "globe"
+                elif want3d:
+                    m["view"] = "globe" if GEO_COUNTRY.search(pc["name"]) else "3d"
+                elif motion and dates and m["geo"] == "place":
+                    m.update({"play": dates[0]["name"], "playGrain": "month"})
+                charts.append(m)
+            elif lat and lon:
+                charts.append({"type": "map", "title": f"{main_title} by location", "x": site["name"] if site else None, "lat": lat["name"], "lon": lon["name"], "geo": "latlon",
+                               "y": main_y, "agg": main_agg, "format": main_fmt, "map": "world", "view": "globe" if ov else "3d" if want3d else "flat", "size": "M",
+                               })
+            if ov and charts and charts[-1]["type"] == "map":    # Overview layout: the globe first, beside the trend
+                charts.insert(0, charts.pop())
+        # ---- ranking of sites / the main category (a bar race in motion style)
+        rank = site if site and site["distinct"] > 6 else (dims[0] if dims and dims[0]["distinct"] > 6 else None)
+        if rank:
+            r = {"type": "hbar", "title": f"Top {_nice(rank['name']).lower()}s by {main_title.lower()}" if not rank["name"].endswith("s") else f"{_nice(rank['name'])} by {main_title.lower()}",
+                 "x": rank["name"], "y": main_y, "agg": main_agg, "sort": "value_desc", "top": 10, "format": main_fmt, "size": "M"}
+            if motion and dates:
+                r.update({"title": f"{_nice(rank['name'])} race — running {main_title.lower()}", "play": dates[0]["name"], "playGrain": "month", "playCum": True})
+            charts.append(r)
+        # ---- share of the main measure (donut; 3D donut in the 3D style)
+        share = next((c for c in dims if 2 <= c["distinct"] <= 6), None)
+        if share:
+            charts.append({"type": "pie", "title": f"{main_title} by {_nice(share['name']).lower()}", "x": share["name"], "y": main_y, "agg": main_agg, "format": main_fmt,
+                           "top": 6, "size": "S", **({"dim": "3d"} if want3d else {})})
+        # ---- stages
         if stage:
-            widgets.append({"type": "funnel", "page": page, "title": f"{nice(stage)} funnel", "dataset": ds, "x": stage["name"],
-                            "y": [count_y], "agg": count_agg, "format": "integer", "size": "XS"})
-        dims = [c for c in cats if c is not stage]
-        if dims:
-            c0 = dims[0]
-            widgets.append({"type": "pie" if c0["distinct"] <= 6 else "hbar", "page": page, "title": f"{main_title} by {c0['name'].replace('_', ' ')}",
-                            "dataset": ds, "x": c0["name"], "y": main_y, "agg": main_agg, "sort": "value_desc", "top": 10, "format": main_fmt, "size": "XS"})
-        for c in avg_m[:2]:
-            dim = dims[1] if len(dims) > 1 else (dims[0] if dims else None)
-            if dim:
-                widgets.append({"type": "bar", "page": page, "title": f"Avg {c['name'].replace('_', ' ')} by {dim['name'].replace('_', ' ')}", "dataset": ds,
-                                "x": dim["name"], "y": [c["name"]], "agg": "avg", "sort": "value_desc", "format": "compact", "size": "XS",
-                                "lowerBetter": bool(re.search(r"hour|minute|time|duration|days|latency", c["name"], re.I))})
-        if len(dims) > 1:
-            widgets.append({"type": "panel", "page": page, "title": f"{main_title} breakdown", "panelMode": "tabs", "size": "M", "dataset": ds,
-                            "children": [{"type": "pie" if c["distinct"] <= 5 else "bar", "title": f"By {c['name'].replace('_', ' ')}", "x": c["name"],
-                                          "y": main_y, "agg": main_agg, "sort": "value_desc", "top": 10} for c in dims[1:4]]})
+            charts.append({"type": "funnel", "title": f"{_nice(stage['name'])} funnel", "x": stage["name"], "y": [count_y], "agg": count_agg, "format": "integer",
+                           "size": "S", **({"dim": "3d"} if want3d else {})})
+        # ---- when things happen: weekday × hour (3D landscape in the 3D style)
+        if wday and hour and main:
+            charts.append({"type": "heatmap", "title": f"{main_title} by {_nice(wday['name']).lower()} and {_nice(hour['name']).lower()}", "x": wday["name"], "series": hour["name"],
+                           "y": main_y, "agg": main_agg, "format": main_fmt, "size": "M", **({"dim": "3d"} if want3d else {})})
+        elif len(dims) > 1 and 3 <= dims[0]["distinct"] <= 12 and 3 <= dims[1]["distinct"] <= 12 and main:
+            charts.append({"type": "heatmap", "title": f"{main_title}: {_nice(dims[0]['name']).lower()} × {_nice(dims[1]['name']).lower()}", "x": dims[0]["name"],
+                           "series": dims[1]["name"], "y": main_y, "agg": main_agg, "format": main_fmt, "size": "M", **({"dim": "3d"} if want3d else {})})
+        # ---- flows between two columns
+        if frm and to and main:
+            charts.append({"type": "sankey", "title": f"{_nice(frm['name'])} → {_nice(to['name']).lower()}", "x": frm["name"], "target": to["name"], "y": main_y, "agg": main_agg,
+                           "format": main_fmt, "size": "S"})
+        # ---- comparisons
         if dims and len(add_m) > 1:
-            widgets.append({"type": "bar", "page": page, "title": f"{nice(add_m[1])} by {dims[0]['name'].replace('_', ' ')}", "dataset": ds,
-                            "x": dims[0]["name"], "y": [add_m[1]["name"]], "agg": "sum", "sort": "value_desc", "format": "compact", "size": "M",
-                            "filterControls": [dims[1]["name"]] if len(dims) > 1 else []})
-        elif dims and stage:
-            widgets.append({"type": "bar", "page": page, "title": f"{noun} by {stage['name'].replace('_', ' ')} and {dims[0]['name'].replace('_', ' ')}", "dataset": ds,
-                            "x": dims[0]["name"], "series": stage["name"], "y": [count_y], "agg": count_agg, "stacked": True, "format": "integer", "size": "M"})
+            c0 = dims[0]
+            b = {"type": "bar", "title": f"{_nice(add_m[1]['name'])} by {_nice(c0['name']).lower()}", "x": c0["name"], "y": [add_m[1]["name"]], "agg": "sum",
+                 "sort": "value_desc", "format": "currency_compact" if money(add_m[1]) else "compact", "size": "S"}
+            if len(dims) > 1 and dims[1]["distinct"] <= 6:
+                b.update({"series": dims[1]["name"], "title": f"{_nice(add_m[1]['name'])} by {_nice(c0['name']).lower()} and {_nice(dims[1]['name']).lower()}", "size": "M"})
+                if want3d:
+                    b["dim"] = "3d"
+            charts.append(b)
+        for c in avg_m[:1]:
+            dim = dims[0] if dims else (site if site and site["distinct"] <= 20 else None)
+            if dim:
+                charts.append({"type": "bar", "title": f"{_avg_title(c['name'])} by {_nice(dim['name']).lower()}", "x": dim["name"], "y": [c["name"]], "agg": "avg",
+                               "sort": "value_desc", "format": avg_fmt(c),
+                               "size": "S", "lowerBetter": bool(re.search(r"hour|minute|time|duration|days|latency", c["name"], re.I))})
+        # ---- sites compared on two measures (bubbles), or as a 3D campus
+        if site and 4 <= site["distinct"] <= 80 and main and (len(add_m) > 1 or avg_m):
+            xm = add_m[1] if len(add_m) > 1 else avg_m[0]
+            charts.append({"type": "scatter", "title": f"{_nice(site['name'])}s: {_nice(xm['name']).lower()} vs {main_title.lower()}", "x": xm["name"], "y": main_y,
+                           "sizeBy": main["name"], "label": site["name"], "agg": "sum", "aggX": "sum" if xm in add_m else "avg", "format": main_fmt, "size": "M",
+                           **({"color": places[0]["name"]} if places and places[0] is not site and places[0]["distinct"] <= 8 else {})})
+            if (want3d or ov) and site["distinct"] <= 40:
+                charts.append({"type": "twin3d", "twin": "campus", "title": f"{_nice(site['name'])} campus — height = {main_title.lower()}", "x": site["name"], "y": main_y,
+                               "agg": main_agg, "format": main_fmt, "size": "M", **({"color": avg_m[0]["name"]} if avg_m else {})})
+        if floor and zone and main:
+            charts.append({"type": "twin3d", "twin": "building", "title": f"{main_title} by {_nice(floor['name']).lower()} and {_nice(zone['name']).lower()}", "x": floor["name"],
+                           "series": zone["name"], "y": main_y, "agg": main_agg, "format": main_fmt, "size": "M", **({"color": avg_m[0]["name"]} if avg_m else {})})
+        if len(dims) > 1 and density != "compact":
+            charts.append({"type": "panel", "title": f"{main_title} breakdown", "panelMode": "tabs", "size": "M", "format": main_fmt,
+                           "children": [{"type": "pie" if c["distinct"] <= 5 else "bar", "title": f"By {_nice(c['name']).lower()}", "x": c["name"],
+                                         "y": main_y, "agg": main_agg, "sort": "value_desc", "top": 10, "format": main_fmt} for c in dims[:4]]})
+        limit = 4 if density == "compact" else 8 if density == "standard" else 9
+        for i, c in enumerate(charts[:limit]):
+            widgets.append({"page": page, "dataset": ds, **c})
+            if ov and ti == 0 and dates and i == 1:          # Overview look: AI insights right after the globe and the trend
+                widgets.append({"type": "insights", "page": page, "title": "What changed", "size": "S"})
         if density == "detailed" and dims:                  # one extra page per main category with its own breakdowns
             for c in dims[:3]:
                 pid = f"p_{ti}_{c['name']}"
-                pages.append({"id": pid, "name": f"By {c['name'].replace('_', ' ')}"})
-                widgets.append({"type": "hbar", "page": pid, "title": f"{main_title} by {c['name'].replace('_', ' ')}", "dataset": ds, "x": c["name"],
+                pages.append({"id": pid, "name": f"By {_nice(c['name']).lower()}"})
+                widgets.append({"type": "hbar", "page": pid, "title": f"{main_title} by {_nice(c['name']).lower()}", "dataset": ds, "x": c["name"],
                                 "y": main_y, "agg": main_agg, "sort": "value_desc", "top": 15, "format": main_fmt, "size": "M"})
                 if dates:
-                    widgets.append({"type": "line", "page": pid, "title": f"{main_title} over time by {c['name'].replace('_', ' ')}", "dataset": ds,
+                    widgets.append({"type": "line", "page": pid, "title": f"{main_title} over time by {_nice(c['name']).lower()}", "dataset": ds,
                                     "x": dates[0]["name"], "series": c["name"], "y": main_y[:1], "agg": main_agg, "format": main_fmt, "size": "M"})
                 for m in add_m[1:3]:
-                    widgets.append({"type": "bar", "page": pid, "title": f"{nice(m)} by {c['name'].replace('_', ' ')}", "dataset": ds, "x": c["name"],
-                                    "y": [m["name"]], "agg": "sum", "sort": "value_desc", "top": 12, "format": "compact", "size": "S"})
-                for m in avg_m[:1]:
-                    widgets.append({"type": "bar", "page": pid, "title": f"Avg {m['name'].replace('_', ' ')} by {c['name'].replace('_', ' ')}", "dataset": ds,
-                                    "x": c["name"], "y": [m["name"]], "agg": "avg", "sort": "value_desc", "format": "compact", "size": "S"})
-        elif density == "compact":
-            keep_types = {"kpi": 4, "chart": 4}
-            page_ws = [w for w in widgets if w["page"] == page]
-            charts = [w for w in page_ws if w["type"] not in ("kpi", "insights", "table")]
-            kp = [w for w in page_ws if w["type"] == "kpi"]
-            drop = {id(w) for w in kp[keep_types["kpi"]:]} | {id(w) for w in charts[keep_types["chart"]:]}
-            widgets[:] = [w for w in widgets if id(w) not in drop]
-        for c in cats[:2]:
+                    widgets.append({"type": "bar", "page": pid, "title": f"{_nice(m['name'])} by {_nice(c['name']).lower()}", "dataset": ds, "x": c["name"],
+                                    "y": [m["name"]], "agg": "sum", "sort": "value_desc", "top": 12, "format": "currency_compact" if money(m) else "compact", "size": "S"})
+        for c in (dims or cats)[:2]:
             if ti == 0:
-                filters.append({"label": nice(c), "type": "select", "dataset": ds, "column": c["name"]})
-        if want_details:
-            if "p_details" not in [x["id"] for x in pages]:
-                pages.append({"id": "p_details", "name": "Details"})
-            widgets.append({"type": "table", "page": "p_details", "title": f"{nice({'name': p['table'].split('.')[-1]})} — records",
-                            "dataset": f"{ds}d" if records_col else ds, "columns": [c["name"] for c in cols[:10]], "size": "XL"})
-    name = (facts[0]["table"].split(".")[-1].replace("_", " ").title() + " dashboard") if facts else "Dashboard"
+                filters.append({"label": _nice(c["name"]), "type": "select", "dataset": ds, "column": c["name"]})
+        widgets.append({"type": "table", "page": "p_details", "title": f"{_nice(p['table'].split('.')[-1])} — records",
+                        "dataset": f"{ds}d" if records_col else ds, "columns": [c["name"] for c in cols[:10]], "size": "XL"})
+    pages.append({"id": "p_details", "name": "Details"})       # details always last
+    name = (_nice(facts[0]["table"].split(".")[-1]) + " dashboard") if facts else "Dashboard"
     m = re.match(r"\s*(?:create|build|make|design)?\s*(?:an?\s+)?([A-Za-z][\w &-]{2,40}?)\s+dashboard\b", prompt, re.I)
-    if m and m.group(1).lower() not in ("a", "an", "the", "my", "new", "full", "complete"):
+    if m and m.group(1).lower() not in ("a", "an", "the", "my", "new", "full", "complete", "overview"):
         name = m.group(1).strip().title() + " dashboard"
-    period = {"preset": "last_30_days" if "30" in low else "last_7_days", "compare": True}
+    period = {"preset": "last_30_days" if "30" in low else "all", "compare": True}
     if not any(d["timeColumn"] for d in datasets):
         period = {"preset": "all", "compare": True}
+    look = style.get("look") if style.get("look") in LOOKS else MODE_LOOK[mode]
     return {"name": name, "description": prompt[:200], "pages": pages, "datasets": datasets, "filters": filters, "widgets": widgets, "period": period,
-            "style": {"look": "ocean", "kpiStyle": "gradient", "fitScreen": True, "kpiLayout": "row"}}
+            "style": {"look": look, "kpiStyle": "icon" if ov else style.get("kpiStyle") if style.get("kpiStyle") in KPI_STYLES else "icon", "fitScreen": False, "kpiLayout": "row",
+                      "motion": "cinematic" if mode in ("motion", "3d") else "subtle", "dim": "2d"}}
 
 
 # ------------------------------------------------------------------ validation & repair
@@ -522,8 +702,9 @@ async def validate(plan, profiles, warnings):
         sql = (d.get("sql") or "").strip().rstrip(";")
         if not sql:
             continue
+        test = PARAM_RE.sub("NULL", sql)                  # {{filters}} are empty (no filter) while checking
         try:
-            res = await asyncio.wait_for(_sql(f"SELECT * FROM ({sql}) _q LIMIT 50", 50), 300)
+            res = await asyncio.wait_for(_sql(f"SELECT * FROM ({test}) _q LIMIT 50", 50), 300)
             cols = res["columns"]
         except (SqlError, asyncio.TimeoutError, HTTPException) as e:
             table = next((p["table"] for p in profiles if p["table"].lower() in sql.lower()), None)
@@ -532,7 +713,7 @@ async def validate(plan, profiles, warnings):
                 warnings.append(f"Dropped dataset “{d.get('name', did)}” and its charts: the query failed ({reason}).")
                 continue
             warnings.append(f"Dataset “{d.get('name', did)}” query failed ({reason}); used the whole table {table} instead.")
-            sql = f"SELECT * FROM {table} LIMIT 5000"
+            sql = test = f"SELECT * FROM {table} LIMIT 5000"
             res = await _sql(f"SELECT * FROM ({sql}) _q LIMIT 50", 50)
             cols = res["columns"]
         ds_cols[did] = cols
@@ -540,15 +721,16 @@ async def validate(plan, profiles, warnings):
         if not tc:
             tc = next((c for c in cols if kinds.get(c) == "date"), None)
         rows_est = None
+        cap = min(MAX_BIG, int(d["maxRows"])) if isinstance(d.get("maxRows"), int) and d["maxRows"] > 5000 else 5000
         try:
-            cres = await asyncio.wait_for(_sql(f"SELECT COUNT(*) FROM ({sql}) _c", 1), 300)
+            cres = await asyncio.wait_for(_sql(f"SELECT COUNT(*) FROM ({test}) _c", 1), 300)
             rows_est = int(cres["rows"][0][0])
-            if rows_est > 5000:
-                warnings.append(f"Dataset “{d.get('name', did)}” returns {rows_est:,} rows; dashboards use the first 5,000 — consider aggregating it.")
+            if rows_est > cap:
+                warnings.append(f"Dataset “{d.get('name', did)}” returns {rows_est:,} rows; dashboards use the first {cap:,} — consider aggregating it.")
         except Exception:  # noqa: BLE001
             pass
         datasets.append({"id": did, "name": str(d.get("name") or did)[:60], "sql": sql, "timeColumn": tc or "__none__",
-                         "purpose": str(d.get("purpose") or "")[:240], "rows": rows_est})
+                         "purpose": str(d.get("purpose") or "")[:240], "rows": rows_est, **({"maxRows": cap} if cap > 5000 else {})})
     if not datasets:
         raise HTTPException(400, "No usable dataset could be built from the request.")
     first_ds = datasets[0]["id"]
@@ -567,12 +749,22 @@ async def validate(plan, profiles, warnings):
             return out
         nums = [c for c in cols if kinds.get(c) in ("num", "id")] or cols
         cats = [c for c in cols if kinds.get(c) == "cat"]
-        y = [m for m in (_match(v, cols) for v in (w.get("y") or [])) if m][:3]
+        y = [m for m in (_match(v, cols) for v in (w.get("y") or [])) if m][:6 if t == "table" else 3]
         if t != "table" and not y:
             y = [nums[0]] if nums else []
         x = _match(w.get("x"), cols)
         if t in ("bar", "hbar", "line", "area", "pie") and not x:
             x = next((c for c in cols if kinds.get(c) == ("date" if t in ("line", "area") else "cat")), None) or (cats[0] if cats else None)
+        if t == "scatter" and (not x or kinds.get(x) not in ("num", "id")):
+            x = next((c for c in nums if c not in y), None)
+        if t in ("heatmap", "sankey", "funnel", "twin3d") and not x:
+            x = cats[0] if cats else None
+        if t in ("rank", "catlist") and not x:
+            x = cats[0] if cats else None
+        if t == "globe" and not x:
+            x = next((c for c in cols if SITE.search(c)), None) or next((c for c in cols if GEO_CITY.search(c) or GEO_STATE.search(c) or GEO_COUNTRY.search(c)), None)
+        if t == "map" and not x and not (w.get("lat") and w.get("lon")):
+            x = next((c for c in cols if GEO_CITY.search(c) or GEO_STATE.search(c) or GEO_COUNTRY.search(c)), None) or (cats[0] if cats else None)
         out.update({"x": x, "y": y, "agg": w.get("agg") if w.get("agg") in AGGS else "sum",
                     "format": w.get("format") if w.get("format") in FORMATS else "compact"})
         if t == "kpi" and out["agg"] == "count":
@@ -580,17 +772,69 @@ async def validate(plan, profiles, warnings):
         for k in ("lowerBetter",):
             if w.get(k):
                 out[k] = bool(w[k])
-        if t == "kpi" and w.get("kpiStyle") in ("gradient", "gauge", "spark", "tinted"):
-            out["kpiStyle"] = w["kpiStyle"]
+        if t == "kpi" and w.get("kpiStyle"):
+            ks = {"gradient": "tiles", "spark": "clean", "tinted": "clean", "accent": "clean"}.get(w["kpiStyle"], w["kpiStyle"])
+            if ks in KPI_STYLES:
+                out["kpiStyle"] = ks
         if t == "kpi" and isinstance(w.get("target"), (int, float)):
             out["target"] = w["target"]
         if t == "table":
             out["heat"] = w.get("heat", True) is not False
             out["totals"] = w.get("totals", True) is not False
+            gb = _match(w.get("groupBy"), cols)
+            if gb:                                          # a summary table: one row per value, the measures added up
+                out["groupBy"] = gb
+            if isinstance(w.get("formats"), dict):
+                out["formats"] = {c: f for c, f in w["formats"].items() if c in cols and f in FORMATS}
         s = _match(w.get("series"), cols)
-        if s and t in ("bar", "line", "area"):
+        if s and t in ("bar", "line", "area", "heatmap", "twin3d"):
             out["series"] = s
             out["y"] = out["y"][:1]
+        if t == "heatmap" and not out.get("series"):
+            out["series"] = next((c for c in cats if c != x), None)
+        if w.get("aggX") in AGGS:
+            out["aggX"] = w["aggX"]
+        for key in ("target", "sizeBy", "color", "label", "z", "lat", "lon", "hint"):
+            m = _match(w.get(key), cols)
+            if m:
+                out[key] = m
+        if t == "sankey" and not out.get("target"):
+            out["target"] = next((c for c in cats if c != x), None)
+        pl = _match(w.get("play"), cols)
+        if pl and (kinds.get(pl) == "date" or pl == x) and t in ("bar", "hbar", "line", "area", "pie", "funnel", "scatter", "map"):
+            out["play"] = pl
+            if w.get("playGrain") in GRAINS:
+                out["playGrain"] = w["playGrain"]
+            if "playCum" in w:
+                out["playCum"] = bool(w["playCum"])
+        if w.get("grain") in GRAINS and t in ("bar", "line", "area"):
+            out["grain"] = w["grain"]                       # time grouping of the X axis
+        if w.get("dim") in ("2d", "3d") and t in ("bar", "hbar", "line", "area", "pie", "funnel", "heatmap", "scatter"):
+            out["dim"] = w["dim"]
+        if t == "map":
+            if w.get("view") in ("flat", "3d", "globe"):
+                out["view"] = w["view"]
+            if isinstance(w.get("map"), str) and re.match(r"^[a-z0-9][a-z0-9_-]{0,48}$", w["map"]):
+                out["map"] = w["map"]
+            if w.get("geo") in ("auto", "region", "place", "latlon"):
+                out["geo"] = w["geo"]
+            if w.get("globeStyle") in ("dots", "solid"):
+                out["globeStyle"] = w["globeStyle"]
+            if "autoRotate" in w:
+                out["autoRotate"] = bool(w["autoRotate"])
+        if t == "twin3d":
+            out["twin"] = w.get("twin") if w.get("twin") in ("building", "campus") else "campus"
+        if t == "globe":                                    # Overview globe: region column + where the locations are
+            for key in ("zone", "city", "state", "country"):
+                mm = _match(w.get(key), cols)
+                if mm:
+                    out[key] = mm
+            if w.get("kind") in ("store", "hospital", "bank", "factory", "campus", "office"):
+                out["kind"] = w["kind"]
+            if w.get("view") in ("globe", "map"):
+                out["view"] = w["view"]
+        if t == "pie" and w.get("pieStyle") in ("donut", "pie", "rose", "rings"):
+            out["pieStyle"] = w["pieStyle"]
         if w.get("stacked") and t in ("bar", "hbar", "area"):
             out["stacked"] = True
         if w.get("sort") in ("label", "value_desc", "value_asc"):
@@ -627,6 +871,10 @@ async def validate(plan, profiles, warnings):
         spec["id"] = _uid("w")
         spec["page"] = w.get("page") if w.get("page") in page_ids else pages[0]["id"]
         spec["size"] = w.get("size") if w.get("size") in ("XS", "S", "M", "L", "XL") else None
+        if isinstance(w.get("rows"), int) and 2 <= w["rows"] <= 12:
+            spec["rows"] = w["rows"]                        # card height in grid rows
+        if spec["type"] == "insights" and w.get("scope") == "all":
+            spec["scope"] = "all"                           # findings from every tab, not only its own
         if spec["type"] not in ("insights", "text"):
             spec["dataset"] = did
         if spec["type"] == "panel":
@@ -646,38 +894,50 @@ async def validate(plan, profiles, warnings):
             warnings.append(f"Skipped “{spec['title']}”: no numeric column to show.")
             continue
         widgets.append(spec)
-    kpis = [w for w in widgets if w["type"] == "kpi"]
-    if len(kpis) > 8:
-        drop = {id(w) for w in kpis[8:]}
+    drop = set()
+    for pg in {w["page"] for w in widgets}:                 # at most 8 KPI cards per page
+        kp = [w for w in widgets if w["type"] == "kpi" and w["page"] == pg]
+        drop |= {id(w) for w in kp[8:]}
+    if drop:
         widgets = [w for w in widgets if id(w) not in drop]
-        warnings.append("Kept the first 8 KPI cards to avoid clutter.")
+        warnings.append("Kept the first 8 KPI cards on each page to avoid clutter.")
     filters = []
-    for f in (plan.get("filters") or [])[:4]:
+    for f in (plan.get("filters") or [])[:5]:
         did = f.get("dataset") if f.get("dataset") in ds_cols else first_ds
         col = _match(f.get("column"), ds_cols[did])
         if col:
-            filters.append({"id": _uid("f"), "label": str(f.get("label") or col)[:40], "type": f.get("type") if f.get("type") in ("select", "multiselect", "text") else "select",
-                            "dataset": did, "column": col})
+            ff = {"id": _uid("f"), "label": str(f.get("label") or col)[:40], "type": f.get("type") if f.get("type") in ("select", "multiselect", "text") else "select",
+                  "dataset": did, "column": col}
+            if isinstance(f.get("param"), str) and re.fullmatch(r"[A-Za-z_]\w{0,40}", f["param"]) and ff["type"] == "select":
+                ff["param"] = f["param"]
+            if f.get("link") and ff["type"] == "select":
+                ff["link"] = True                            # clicking a chart value sets this filter
+            filters.append(ff)
     used_pages = {w["page"] for w in widgets}
     pages = [p for p in pages if p["id"] in used_pages] or pages[:1]
     pr = plan.get("period") or {}
-    period = {"preset": pr.get("preset") if pr.get("preset") in ("last_7_days", "last_week", "last_14_days", "last_30_days", "this_month", "last_month", "all") else "last_30_days",
+    period = {"preset": pr.get("preset") if pr.get("preset") in ("last_7_days", "last_week", "last_14_days", "last_30_days", "last_90_days", "last_12_months", "this_month",
+                                                                 "last_month", "all") else "last_30_days",
               "compare": pr.get("compare", True) is not False, "column": "", "anchor": "data"}
     if not any(d["timeColumn"] != "__none__" for d in datasets):
         period["preset"] = "all"
     st = plan.get("style") or {}
+    kst = {"gradient": "tiles", "spark": "clean", "tinted": "clean", "accent": "clean"}.get(st.get("kpiStyle"), st.get("kpiStyle"))
     return {"datasets": datasets, "pages": pages, "widgets": widgets, "filters": filters, "period": period,
             "refreshMinutes": 0, "currency": "₹", "theme": "auto",
-            "look": st.get("look") if st.get("look") in ("ocean", "midnight", "aurora", "clean") else "ocean",
-            "kpiStyle": st.get("kpiStyle") if st.get("kpiStyle") in ("gradient", "gauge", "spark", "tinted") else "gradient",
-            "fitScreen": st.get("fitScreen", True) is not False,
+            "look": st.get("look") if st.get("look") in LOOKS else "vivid",
+            "kpiStyle": kst if kst in KPI_STYLES else "icon",
+            "fitScreen": st.get("fitScreen") is True,
+            "motion": st.get("motion") if st.get("motion") in ("off", "subtle", "cinematic") else "subtle",
+            "dim": "3d" if st.get("dim") == "3d" else "2d",
             "kpiLayout": st.get("kpiLayout") if st.get("kpiLayout") in ("row", "beside_insights") else "row"}
 
 
 # ------------------------------------------------------------------ layout engine
 SIZE_W = {"XS": 3, "S": 4, "M": 6, "L": 8, "XL": 12}
-DEFAULT_SIZE = {"line": "L", "area": "L", "bar": "M", "hbar": "M", "pie": "S", "panel": "M", "table": "XL", "text": "M", "insights": "S"}
-HEIGHT = {"kpi": 2, "insights": 4, "table": 6, "text": 2}
+DEFAULT_SIZE = {"line": "L", "area": "L", "bar": "M", "hbar": "M", "pie": "S", "funnel": "S", "scatter": "M", "heatmap": "M", "sankey": "S", "map": "M",
+                "twin3d": "M", "panel": "M", "table": "XL", "text": "M", "insights": "S", "rank": "S", "catlist": "S", "globe": "L"}
+HEIGHT = {"kpi": 2, "insights": 4, "table": 6, "text": 2, "map": 5, "twin3d": 5, "scatter": 5, "hbar": 5, "globe": 6, "rank": 5, "catlist": 5}
 
 
 def layout(defn):
@@ -687,12 +947,16 @@ def layout(defn):
         kpis = [w for w in ws if w["type"] == "kpi"]
         ins = next((w for w in ws if w["type"] == "insights"), None)
         row_mode = defn.get("kpiLayout", "beside_insights") == "row"
-        if kpis and row_mode:                               # all KPI tiles in one row across the top (up to 6 per row)
+        if kpis and row_mode:                               # all KPI tiles in one row across the top (up to 6 per row), widths as even as possible
             per_row = min(6, len(kpis))
-            width = 12 // per_row
-            for i, k in enumerate(kpis):
-                r_, c_ = divmod(i, per_row)
-                k["layout"] = {"x": c_ * width, "y": r_ * 2, "w": width if c_ < per_row - 1 else 12 - c_ * width, "h": 2}
+            for r0 in range(0, len(kpis), per_row):
+                row_k = kpis[r0:r0 + per_row]
+                base, extra = divmod(12, len(row_k))
+                x0 = 0
+                for i, k in enumerate(row_k):
+                    wdt = base + (1 if i < extra else 0)
+                    k["layout"] = {"x": x0, "y": (r0 // per_row) * 2, "w": wdt, "h": 2}
+                    x0 += wdt
             y = -(-len(kpis) // per_row) * 2
             kpis = []                                       # placed
         if kpis:
@@ -731,6 +995,9 @@ def layout(defn):
             size = w.pop("size", None) or DEFAULT_SIZE.get(w["type"], "M")
             wd = SIZE_W[size]
             h = HEIGHT.get(w["type"], 5 if w["type"] == "panel" and w.get("panelMode") == "grid" else 4)
+            if w["type"] == "insights" and size == "XL":
+                h = 3                                       # one row of insight tiles across the page
+            h = w.pop("rows", None) or h
             if row_w + wd > 12:
                 flush()
             w["layout"] = {"x": row_w, "y": y, "w": wd, "h": h}
@@ -740,6 +1007,8 @@ def layout(defn):
         flush()
     for w in defn["widgets"]:
         w.pop("size", None)
+        if w.get("sizeBy"):
+            w["size"] = w.pop("sizeBy")                   # bubble size column (the plan's "size" is the card size)
     return defn
 
 
@@ -796,11 +1065,12 @@ async def model(prompt="", tables=None, schema=None, ctx=None):
             "profiles": [{"table": p["table"], "rows": p["rows"], "grain": _grain(p), "columns": [{k: c.get(k) for k in ("name", "type", "kind", "distinct", "values")} for c in p["columns"]]} for p in profiles]}
 
 
-async def plan(prompt, tables=None, use_ai=True, schema=None, ctx=None, save_ctx=True):
+async def plan(prompt, tables=None, use_ai=True, schema=None, ctx=None, save_ctx=True, style=None):
     """Design a dashboard (not saved): profile tables, plan with AI (or rules), validate, reconcile, lay out."""
     ctx = ctx or {}
     prompt = (prompt or "").strip()
-    if len(prompt) < 5:
+    asked = prompt if len(prompt) >= 5 else ""
+    if not asked:
         prompt = "Build a complete overview dashboard: you decide the KPIs, charts, panels and filters."
     warnings = []
     profiles = await _profiles_for(prompt, tables, schema, warnings)
@@ -811,11 +1081,15 @@ async def plan(prompt, tables=None, use_ai=True, schema=None, ctx=None, save_ctx
         ctx = dash_model.save_context(key, ctx)
     rels = _merge_rels(relationships(profiles), ctx.get("relationships"), profiles)
     the_plan, used_ai = None, False
-    if use_ai:
+    if (style or {}).get("mode") == "overview":            # the Overview: a fixed, rule-based design (KPIs, globe, lists, insights)
+        from . import dash_overview
+        the_plan = dash_overview.plan(prompt if asked else "", profiles, rels)
+        use_ai = False
+    if use_ai and the_plan is None:
         try:
             st = await assistant.status()
             if st.get("ok"):
-                the_plan = await llm_plan(prompt, profiles, rels, ctx)
+                the_plan = await llm_plan(prompt, profiles, rels, ctx, style)
                 used_ai = True
             else:
                 warnings.append("AI is not configured (Admin › Settings › Dora), so the built-in designer was used.")
@@ -823,13 +1097,41 @@ async def plan(prompt, tables=None, use_ai=True, schema=None, ctx=None, save_ctx
             warnings.append(f"The AI plan could not be used ({str(e)[:140]}); the built-in designer was used instead.")
             the_plan = None
     if the_plan is None:
-        the_plan = rule_plan(prompt, profiles, rels, ctx.get("density") or "standard")
+        the_plan = rule_plan(prompt, profiles, rels, ctx.get("density") or "standard", style)
+    style = style or {}
+    if style:                                              # the look the person picked wins over the plan's
+        st = the_plan.setdefault("style", {})
+        mode = style.get("mode") if style.get("mode") in MODES else None
+        if style.get("look") in LOOKS:
+            st["look"] = style["look"]
+        elif mode:
+            st["look"] = st.get("look") if st.get("look") in LOOKS and used_ai else MODE_LOOK[mode]
+        if mode:
+            st["motion"] = "cinematic" if mode in ("motion", "3d") else "subtle"
+        if style.get("kpiStyle") in KPI_STYLES:
+            st["kpiStyle"] = style["kpiStyle"]
+        if mode == "overview":                              # the Overview look, whoever planned it: icon KPI row, maps as a solid globe
+            if style.get("kpiStyle") not in KPI_STYLES:
+                st["kpiStyle"] = "icon"
+            st["kpiLayout"] = "row"
+            for w in the_plan.get("widgets") or []:
+                if isinstance(w, dict) and w.get("type") == "map":
+                    w["view"] = "globe"
+    if (style or {}).get("mode") != "overview" and not any(str(p.get("name", "")).lower() == "ai insights" for p in the_plan.get("pages") or []):
+        pages = the_plan.setdefault("pages", [{"id": "p1", "name": "Overview"}])
+        at = next((i for i, p in enumerate(pages) if p.get("id") == "p_details"), len(pages))
+        pages.insert(at, {"id": "p_ai", "name": "AI Insights"})        # every dashboard: an AI Insights tab over all its tabs
+        the_plan.setdefault("widgets", []).append({"type": "insights", "page": "p_ai", "title": "AI Insights", "size": "XL", "scope": "all", "rows": 7})
     defn = await validate(the_plan, profiles, warnings)
     layout(defn)
     checks = await dash_model.reconcile(_sql, profiles, rels, defn["datasets"], ctx.get("rules"))
     domain = ctx.get("domain") if ctx.get("domain") not in (None, "", "auto") else dash_model.detect_domain(profiles)
     defn["model"] = {"tables": [p["table"] for p in profiles], "relationships": rels, "rules": ctx.get("rules") or [], "domain": domain,
                      "key": key, "erd": dash_model.erd(profiles, rels)}
+    if not asked:                                          # no prompt: name it after the data, not after the default instruction
+        if (style or {}).get("mode") != "overview":
+            the_plan["name"] = f"{_nice(profiles[0]['table'].split('.')[-1])} dashboard" if profiles else "Dashboard"
+        the_plan["description"] = f"Built {'by DataBridge AI' if (style or {}).get('mode') == 'overview' else 'with AI'} from {', '.join(p['table'] for p in profiles[:4])}"
     return {"name": str(the_plan.get("name") or "AI dashboard")[:80], "description": str(the_plan.get("description") or prompt)[:300],
             "definition": defn, "warnings": warnings, "used_ai": used_ai, "tables": [p["table"] for p in profiles],
             "relationships": rels, "domain": domain, "checks": checks, "summary": dash_model.summary(checks), "erd": defn["model"]["erd"],
@@ -870,5 +1172,5 @@ def compact(defn):
     return defn
 
 
-async def build(prompt, tables=None, use_ai=True, schema=None, ctx=None):
-    return await plan(prompt, tables, use_ai, schema, ctx)
+async def build(prompt, tables=None, use_ai=True, schema=None, ctx=None, style=None):
+    return await plan(prompt, tables, use_ai, schema, ctx, style=style)

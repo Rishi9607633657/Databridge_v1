@@ -48,19 +48,20 @@
    Cached in localStorage so the page never flashes the old look; ?skin=<name> previews one in this tab only. */
 (function () {
   const KEY = 'databridge-skin';
-  const SKINS = ['classic', 'saffron', 'studio', 'midnight', 'ledger'];   // fonts: /static/vendor/fonts (bundled, offline)
+  const SKINS = ['vivid', 'classic', 'saffron', 'studio', 'midnight', 'ledger'];   // fonts: /static/vendor/fonts (bundled, offline)
+  const DEF = 'vivid';                                                               // the DataBridge AI look
   const url = new URLSearchParams(location.search).get('skin');
-  const read = () => { try { return localStorage.getItem(KEY) || 'classic'; } catch { return 'classic'; } };
+  const read = () => { try { return localStorage.getItem(KEY) || DEF; } catch { return DEF; } };
   function apply(name) {
-    const skin = SKINS.includes(name) ? name : 'classic';
+    const skin = SKINS.includes(name) ? name : DEF;
     document.documentElement.dataset.skin = skin;
     window.dispatchEvent(new CustomEvent('db-skin', { detail: { skin } }));
   }
   window.DBSkin = {
     list: SKINS,
-    get: () => document.documentElement.dataset.skin || 'classic',
+    get: () => document.documentElement.dataset.skin || DEF,
     /* the server's choice (from /api/auth/me) */
-    server(name) { if (url) return; try { localStorage.setItem(KEY, name || 'classic'); } catch { /* private mode */ } apply(name || 'classic'); },
+    server(name) { if (url) return; try { localStorage.setItem(KEY, name || DEF); } catch { /* private mode */ } apply(name || DEF); },
     /* try a look without saving it */
     preview: apply,
   };

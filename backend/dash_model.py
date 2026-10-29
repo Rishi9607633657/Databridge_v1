@@ -246,7 +246,7 @@ async def reconcile(run, profiles, rels, datasets=None, rules=None):
                     else f"{int(_num(a)):,} row(s) ({(_num(a) / n * 100 if n else 0):.2f}%) have a {fk} that is missing in {t}. They show as (blank) when grouped by its columns.")
 
     for d in datasets or []:
-        sql = (d.get("sql") or "").strip().rstrip(";")
+        sql = re.sub(r"\{\{\s*[A-Za-z_]\w*\s*\}\}", "NULL", (d.get("sql") or "").strip().rstrip(";"))   # filters empty
         if not re.search(r"\bgroup\s+by\b", sql, re.I):
             continue
         base = next((p for p in profiles if re.search(r"\bfrom\s+" + re.escape(p["table"]) + r"\b", sql, re.I)), None)

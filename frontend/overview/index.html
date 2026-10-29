@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="DataBridge AI overview: domain-configurable analytics dashboard" />
+    <title>DataBridge AI · Overview</title>
+    <link rel="icon" type="image/png" href="./favicon.png" />
+    <script>
+      /* apply the saved theme before first paint (no flash); inside DataBridge it is shared with the workspace pages */
+      try { var t = location.pathname.indexOf('/static/overview') >= 0 ? (localStorage.getItem('databridge-theme') || 'system') : null;
+        if (t !== 'light' && t !== 'dark' && t !== 'system') { var s = JSON.parse(localStorage.getItem('dbx.settings') || '{}'); t = s.theme || 'light'; }
+        if (t === 'system') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+    </script>
+    <script type="module" crossorigin src="./assets/main-DPArI6zq.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/webgl-BzFiKv2c.js">
+    <link rel="stylesheet" crossorigin href="./assets/main-B4AsDhRx.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

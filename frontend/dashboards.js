@@ -8,13 +8,56 @@ const DB_AGGS = { sum: 'Sum', avg: 'Average', count: 'Count', countd: 'Count dis
 DB_TYPES.insights = 'Smart insights';
 DB_TYPES.panel = 'Multi-chart panel';
 DB_TYPES.funnel = 'Funnel';
+DB_TYPES.rank = 'Top list';
+DB_TYPES.catlist = 'Category list';
+DB_TYPES.globe = 'Globe overview';
+if (typeof DB_CHART_TYPES === 'object') Object.assign(DB_TYPES, DB_CHART_TYPES);   // bubbles, heatmap, flow, map, building (dash_charts.js)
 const DB_LOOKS = { clean: 'Clean', ocean: 'Ocean (light blue)', midnight: 'Midnight (dark)', aurora: 'Aurora (purple)' };
 const DB_LOOK_PALETTE = { midnight: 'neon', aurora: 'aurora', ocean: 'vivid', clean: 'vivid' };
 if (typeof DB_THEMES !== 'undefined') {
   DB_THEMES.neon = ['#3DD9EB', '#7C83FD', '#F7B32B', '#FF6B9A', '#2EE59D', '#A78BFA', '#FB923C', '#38BDF8', '#C4F042', '#F87171'];
   DB_THEMES.aurora = ['#7B3FE4', '#C056D8', '#E879A6', '#5B6CF0', '#22B8CF', '#9D4EDD', '#F59E0B', '#14B8A6', '#6366F1', '#EC4899'];
 }
-const DB_KPI_STYLES = { tinted: 'Tinted card + mini bars', gradient: 'Colour tiles', gauge: 'Gauge', spark: 'Number + sparkline', ring: 'Progress ring', minimal: 'Big number (minimal)', accent: 'Accent bar' };
+const DB_KPI_STYLES = { icon: 'Icon tiles — icon, number, change and trend bars', clean: 'Clean — number, change and trend', tiles: 'Colour tiles', gauge: 'Gauge', ring: 'Progress ring', minimal: 'Big number only' };
+/* "Icon tiles" KPI style (the DataBridge AI overview look): one gradient per card, in this order */
+const DB_ICON_HUES = [['#3FDB95', '#0E9F6E'], ['#5B8CFF', '#2155F0'], ['#B98BFF', '#7C3AED'], ['#FFC145', '#F97316'], ['#FF7D93', '#E11D48'], ['#4CC7FA', '#0284C7'], ['#4FE0CB', '#0D9488'], ['#FFD75E', '#F59E0B']];
+const DB_KPI_GLYPHS = {
+  chart: '<path d="M3 3v18h18"/><path d="M8 17v-4M12 17V8M16 17v-6M20 17V5"/>',
+  cart: '<circle cx="8" cy="21" r="1.2"/><circle cx="19" cy="21" r="1.2"/><path d="M2 2h2.5l2.6 12.4a2 2 0 0 0 2 1.6h9.6a2 2 0 0 0 2-1.6L22 7H5.2"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/>',
+  store: '<path d="M3 9l1.6-5h14.8L21 9"/><path d="M3 9h18v1.5a3 3 0 0 1-6 0 3 3 0 0 1-6 0 3 3 0 0 1-6 0z"/><path d="M5 13v8h14v-8M10 21v-5h4v5"/>',
+  target: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
+  gauge: '<path d="M12 14l4-4"/><path d="M3.3 19a10 10 0 1 1 17.4 0"/>',
+  clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+  star: '<path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z"/>',
+  trend: '<path d="M22 7l-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/>',
+};
+function dbKpiGlyph(w) {
+  const n = `${w.title || ''} ${(w.y || [])[0] || ''}`.toLowerCase();
+  const k = /forecast|target|goal|budget/.test(n) ? 'target'
+    : /customer|user|patient|student|member|account|people|visitor|learner|guest|employee|staff/.test(n) ? 'users'
+    : /store|outlet|location|site|branch|facilit|plant|campus|shop|restaurant|kitchen/.test(n) ? 'store'
+    : /order|transaction|txn|visit|qty|quantit|unit|item|shipment|enrol|booking|count|records/.test(n) ? 'cart'
+    : /rate|pct|percent|margin|share|occupancy|util|oee|csat|nps|sla/.test(n) ? 'gauge'
+    : /time|minute|hour|duration|latency|days|wait/.test(n) ? 'clock'
+    : /rating|score|star/.test(n) ? 'star'
+    : /sales|revenue|amount|value|gmv|income|profit|price|cost|spend|ticket|fee|energy|kwh/.test(n) ? 'chart' : 'trend';
+  return `<svg viewBox="0 0 24 24" width="27" height="27" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${DB_KPI_GLYPHS[k]}</svg>`;
+}
+/* trend as bars (earlier bars lighter), the KPI-card mark from the reference design */
+function dbSparkBars(vals, from, to) {
+  const v = (vals || []).filter(dbIsNum);
+  if (v.length < 2) return null;
+  const n = Math.min(9, v.length);
+  const per = v.length / n;
+  const bars = Array.from({ length: n }, (_, i) => {
+    const seg = v.slice(Math.floor(i * per), Math.max(Math.floor(i * per) + 1, Math.floor((i + 1) * per)));
+    return seg.reduce((a, b) => a + b, 0) / seg.length;
+  });
+  const max = Math.max(...bars), min = Math.min(...bars);
+  return el('div', { class: 'kpi-bars', 'aria-hidden': 'true' }, bars.map((b, i) => el('i', {
+    style: `height:${Math.round((max === min ? 0.6 : 0.22 + (0.78 * (b - min)) / (max - min)) * 100)}%;background:linear-gradient(${from},${to});opacity:${(0.3 + (0.7 * (i + 1)) / n).toFixed(2)}` })));
+}
 function gaugeSvg(ratio, color) {
   const a = Math.PI * (1 - ratio), x = 60 + 48 * Math.cos(a), y = 60 - 48 * Math.sin(a);
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -32,8 +75,24 @@ function sparkLine(vals, color, area) {
   svg.innerHTML = (area ? `<path d="${d} L${W} ${H} L0 ${H} Z" fill="${color}" opacity=".15"/>` : '') + `<path d="${d}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>`;
   return svg;
 }
+/* smooth area sparkline that fills the card width (KPI cards) */
+function dbSparkArea(vals, color, fill) {
+  const W = 200, H = 44, mx = Math.max(...vals), mn = Math.min(...vals), span = mx - mn || 1;
+  const pts = vals.map((v, i) => [(i / (vals.length - 1)) * W, H - 4 - ((v - mn) / span) * (H - 12)]);
+  let d = `M${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+    d += ` C${(p1[0] + (p2[0] - p0[0]) / 6).toFixed(1)} ${(p1[1] + (p2[1] - p0[1]) / 6).toFixed(1)} ${(p2[0] - (p3[0] - p1[0]) / 6).toFixed(1)} ${(p2[1] - (p3[1] - p1[1]) / 6).toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
+  }
+  const id = `kg${Math.random().toString(36).slice(2, 9)}`;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('preserveAspectRatio', 'none'); svg.setAttribute('class', 'kpi-area'); svg.setAttribute('aria-hidden', 'true');
+  svg.innerHTML = `<defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${fill || color}" stop-opacity="${fill ? 0.5 : 0.3}"/><stop offset="1" stop-color="${fill || color}" stop-opacity="0"/></linearGradient></defs>`
+    + `<path d="${d} L${W} ${H} L0 ${H} Z" fill="url(#${id})"/><path d="${d}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>`;
+  return svg;
+}
 const DB_PERIODS = { all: 'All dates', last_7_days: 'Last 7 days', last_week: 'Last week (Mon–Sun)', last_14_days: 'Last 14 days',
-  this_month: 'This month to date', last_month: 'Last month', last_30_days: 'Last 30 days', custom: 'Custom range' };
+  this_month: 'This month to date', last_month: 'Last month', last_30_days: 'Last 30 days', last_90_days: 'Last 90 days', last_12_months: 'Last 12 months', custom: 'Custom range' };
 const dbIso = (d) => d.toISOString().slice(0, 10);
 const dbAddDays = (iso, n) => { const d = new Date(`${iso}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return dbIso(d); };
 const dbDays = (a, b) => Math.round((new Date(`${b}T00:00:00Z`) - new Date(`${a}T00:00:00Z`)) / 86400000) + 1;
@@ -47,6 +106,13 @@ function dbWindows(p, anchor) {
     case 'last_7_days': w = last(7); break;
     case 'last_14_days': w = last(14); break;
     case 'last_30_days': w = last(30); break;
+    case 'last_90_days': w = last(90); break;
+    case 'last_12_months': {                                  // the 12 calendar months up to the anchor's month, vs the 12 before
+      const first = new Date(`${anchor.slice(0, 7)}-01T00:00:00Z`); first.setUTCMonth(first.getUTCMonth() - 11);
+      const from = dbIso(first);
+      const pf = new Date(`${from}T00:00:00Z`); pf.setUTCMonth(pf.getUTCMonth() - 12);
+      return { cur: { from, to: anchor }, prev: p.compare === false ? null : { from: dbIso(pf), to: dbAddDays(from, -1) } };
+    }
     case 'last_week': {
       const dow = (new Date(`${anchor}T00:00:00Z`).getUTCDay() + 6) % 7;
       const thisMon = dbAddDays(anchor, -dow);
@@ -93,7 +159,7 @@ function dbFmt(v, fmt, cur = '₹') {
       if (a >= 1e7) return `${(v / 1e7).toFixed(2)} Cr`;
       if (a >= 1e5) return `${(v / 1e5).toFixed(2)} L`;
       if (a >= 1e3) return `${(v / 1e3).toFixed(1)}K`;
-      return nf({ maximumFractionDigits: 2 });
+      return nf({ maximumFractionDigits: a >= 100 ? 0 : a >= 10 ? 1 : 2 });   // ~3 significant digits, so labels line up
     }
     case 'integer': return nf({ maximumFractionDigits: 0 });
     case 'currency_compact': return `${v < 0 ? '−' : ''}${cur}${dbFmt(Math.abs(v), 'compact', cur)}`;
@@ -154,31 +220,57 @@ function dbAggregate(cols, rows, w) {
 }
 
 /* ======================= list ======================= */
-async function viewDashboards(main) {
+async function viewDashboards(main, r) {
   const canEdit = !CURRENT_USER || CURRENT_USER.role !== 'viewer';
-  main.append(el('div', { class: 'page-head' }, el('h1', { class: 'grow' }, 'Dashboards'),
-    canEdit && dbFeat('dashboards_ai') ? btn('Build with AI', () => dbAiDialog(), { ic: 'flow', title: 'Describe a dashboard in one prompt' }) : null,
-    canEdit ? btn('New dashboard', () => dbNewDialog(), { cls: 'primary', ic: 'plus' }) : null));
-  const panel = el('section', { class: 'panel' }, loading());
+  if (r && r.params && r.params.get('ai') === '1' && canEdit && dbFeat('dashboards_ai')) {   // "Build a dashboard with AI" from Home
+    const board = r.params.get('board') === '1';                // the Overview app's "full-page Overview" link
+    history.replaceState(null, '', `${location.pathname}${location.search}#/dashboards`);
+    setTimeout(() => dbAiDialog({ board }), 0);
+  }
+  main.append(el('div', { class: 'page-head' }, el('div', { class: 'grow' }, el('h1', {}, 'Dashboards'),
+    el('p', { class: 'muted small', style: { margin: '2px 0 0' } }, 'KPIs, charts, maps and 3D views of your tables — built by AI or by hand.')),
+    canEdit ? btn('New dashboard', () => dbNewDialog(), { ic: 'plus' }) : null,
+    canEdit && dbFeat('dashboards_ai') ? btn('Build with AI', () => dbAiDialog(), { cls: 'primary', ic: 'flow', title: 'Pick a table and a style — AI builds the whole dashboard' }) : null));
+  const panel = el('section', {}, loading());
   main.append(panel);
   let list;
   try { list = await api('/api/dashboards'); } catch (e) { panel.replaceChildren(errBox(e)); return; }
+  if (typeof dbLoadUserThemes === 'function') { try { await dbLoadUserThemes(); } catch { /* defaults */ } }
   if (!list.length) {
-    panel.replaceChildren(el('div', { class: 'empty' }, el('h2', {}, 'No dashboards yet'),
-      el('p', {}, 'Build KPI cards and charts from your tables, add filters, and share them with your team.'),
-      canEdit ? btn('New dashboard', () => dbNewDialog(), { cls: 'primary' }) : null));
+    panel.replaceChildren(el('div', { class: 'empty dbl-empty' }, el('h2', {}, 'No dashboards yet'),
+      el('p', {}, 'Pick a table and a style — Overview, Charts or 3D — and AI builds the KPIs, globe, lists, charts and insights for you.'),
+      canEdit ? el('div', { class: 'row', style: { gap: '8px', justifyContent: 'center' } },
+        dbFeat('dashboards_ai') ? btn('Build with AI', () => dbAiDialog(), { cls: 'primary', ic: 'flow' }) : null, btn('New dashboard', () => dbNewDialog())) : null));
     return;
   }
-  panel.replaceChildren(el('table', { class: 't' }, el('thead', {}, el('tr', {}, ['Name', 'Widgets', 'Owner', 'Updated', ''].map((x) => el('th', {}, x)))),
-    el('tbody', {}, list.map((d) => el('tr', { class: 'clickable', onClick: () => (location.hash = `#/dashboard/${d.id}`) },
-      el('td', {}, el('b', {}, d.name), d.description ? el('div', { class: 'muted', style: { fontSize: '12.5px' } }, d.description) : null),
-      el('td', { class: 'muted' }, `${d.widgets} widget${d.widgets === 1 ? '' : 's'} · ${d.datasets} dataset${d.datasets === 1 ? '' : 's'}`),
-      el('td', { class: 'muted' }, d.owner || '—'), el('td', { class: 'muted' }, ago(d.updated)),
-      el('td', { style: { textAlign: 'right' } }, canEdit ? btn('', async (e) => {
-        e.stopPropagation();
-        if (!(await confirmDialog(`Delete ${d.name}?`, 'The dashboard is removed for everyone. Tables are not touched.', 'Delete'))) return;
-        await api(`/api/dashboards/${d.id}`, { method: 'DELETE' }); render();
-      }, { cls: 'ghost icon sm', ic: 'trash', title: 'Delete dashboard' }) : null))))));
+  const boardHref = (d) => `/static/overview/index.html?board=${encodeURIComponent(d.id)}#/`;
+  const open = (d) => { if (d.kind === 'overview') location.href = boardHref(d); else location.hash = `#/dashboard/${d.id}`; };
+  const preview = (d) => {
+    if (d.kind === 'overview') {
+      return el('div', { class: 'dbl-prev dbl-live', 'aria-hidden': 'true' },
+        el('span', { class: 'dbl-live-tag' }, el('i'), 'Live'),
+        el('div', { class: 'dbl-live-kpis' }, ['#12B76A', '#2F6BFF', '#8B5CF6', '#F79009'].map((c) => el('span', { style: `--c:${c}` }, el('b'), el('i')))),
+        el('div', { class: 'dbl-live-main' }, el('span', { class: 'dbl-live-globe' }), el('span', { class: 'dbl-live-line' })));
+    }
+    const t = dbResolveTheme(d.look || 'clean');
+    const prev = el('div', { class: 'thp-prev dbl-prev' },
+      el('div', { class: 'thp-row' }, el('div', { class: 'thp-card dash-w' }, el('b', {}, '₹2.4 Cr'), el('span', {}, 'Sales')), el('div', { class: 'thp-card dash-w' }, el('b', {}, '+12%'), el('span', {}, 'Growth')),
+        el('div', { class: 'thp-card dash-w' }, el('b', {}, '18.2K'), el('span', {}, 'Orders'))),
+      el('div', { class: 'thp-card dash-w thp-chart' }, t.p.slice(0, 7).map((c, i) => el('i', { style: { background: d.dim === '3d' ? `linear-gradient(90deg, ${c}, ${c}aa)` : t.p[0], height: `${[55, 80, 45, 92, 68, 74, 50][i]}%`, opacity: d.dim === '3d' ? 1 : 0.55 + i * 0.06 } }))));
+    dbApplyThemeTo(prev, t);
+    return prev;
+  };
+  panel.replaceChildren(el('div', { class: 'dbl-grid' }, list.map((d) => el('article', { class: `dbl-card${d.kind === 'overview' ? ' is-live' : ''}`, tabindex: 0, role: 'link', 'aria-label': `Open ${d.name}`,
+    onClick: () => open(d), onKeydown: (e) => { if (e.key === 'Enter') open(d); } },
+  preview(d),
+  el('div', { class: 'dbl-body' }, el('b', { class: 'dbl-name' }, d.name), d.description ? el('div', { class: 'muted dbl-desc' }, d.description) : null,
+    el('div', { class: 'dbl-meta' }, d.kind === 'overview' ? `Full-page Overview · ${d.table || 'your table'} · ${ago(d.updated)}${d.owner ? ` · ${d.owner}` : ''}`
+      : `${d.widgets} widget${d.widgets === 1 ? '' : 's'} · ${d.pages} page${d.pages === 1 ? '' : 's'} · ${ago(d.updated)}${d.owner ? ` · ${d.owner}` : ''}`)),
+  canEdit ? btn('', async (e) => {
+    e.stopPropagation();
+    if (!(await confirmDialog(`Delete ${d.name}?`, 'The dashboard is removed for everyone. Tables are not touched.', 'Delete'))) return;
+    await api(`/api/dashboards/${d.id}`, { method: 'DELETE' }); render();
+  }, { cls: 'ghost icon sm dbl-del', ic: 'trash', title: 'Delete dashboard' }) : null))));
 }
 
 const DB_AI_EXAMPLES = [
@@ -186,7 +278,7 @@ const DB_AI_EXAMPLES = [
   ['Let AI decide', 'Look at the data and build the most useful dashboard: you decide the KPIs, charts, panels, filters and pages. Focus on what changed recently and where the problems are.'],
   ['Finance view', 'Finance view for the last 30 days vs the previous 30: revenue, refunds and discounts (lower is better), payment method share, refunds by store with a store filter on that chart.'],
 ];
-const DB_W_LABEL = { kpi: 'KPI card', bar: 'Bar chart', hbar: 'Horizontal bar', line: 'Line / trend', area: 'Area chart', pie: 'Pie / donut', table: 'Table', panel: 'Multi-chart panel', insights: 'Smart insights', text: 'Text' };
+const DB_W_LABEL = { kpi: 'KPI card', bar: 'Columns', hbar: 'Ranking', line: 'Line / trend', area: 'Area chart', pie: 'Donut', funnel: 'Funnel', scatter: 'Bubbles', heatmap: 'Heatmap', sankey: 'Flow', map: 'Map', twin3d: 'Building', table: 'Table', panel: 'Tabs', insights: 'AI insights', text: 'Text', rank: 'Top list', catlist: 'Categories', globe: 'Globe' };
 /* Build with AI: 1) describe + choose data, 2) review the proposed datasets & visuals, 3) create. opts: {schema, tables} */
 async function dbAiDialog(opts = {}) {
   let meta = { template: '', tables: [] };
@@ -198,49 +290,103 @@ async function dbAiDialog(opts = {}) {
   await openDialog((close) => {
     const root = el('div', { class: 'dlg ai-dlg' });
     let prompt = opts.prompt || '', useAi = true, plan = null, model = null;
+    /* the style decides what gets built: Overview (KPI row, globe, lists, insights), Charts or 3D; theme, motion and AI are extras */
+    const look = { mode: opts.board ? 'board' : 'overview', theme: '', animate: false };
+    const STYLES = [['overview', 'Overview', 'KPI row, 3D globe with regions, top list, categories, trend and AI insights', 'globe', 'Recommended'],
+      ['clean', 'Charts', 'Clean 2D charts picked for your data', 'bar', ''], ['3d', '3D', '3D donut and bars, a 3D map or globe, a campus', 'cube', '']];
+    if (opts.board) STYLES.push(['board', 'Full-page Overview', 'Opens in the Overview app, with its own pages and settings', 'overview', '']);
+    const buildKind = () => (look.mode === 'clean' && look.animate ? 'motion' : look.mode);
+    const styleBody = () => ({ mode: buildKind() === 'board' ? 'overview' : buildKind(), ...(look.theme ? { look: look.theme } : {}) });
+    const styleCards = (onChange) => {
+      const box = el('div', { class: 'ai-modes ai-styles', role: 'radiogroup', 'aria-label': 'Style' });
+      const draw = () => box.replaceChildren(...STYLES.map(([k, t, d, ic, tag]) => el('button', { type: 'button', role: 'radio', class: `ai-mode${look.mode === k ? ' on' : ''}`, 'aria-checked': String(look.mode === k),
+        onClick: () => { look.mode = k; draw(); if (onChange) onChange(); } },
+      ic === 'globe' || ic === 'overview' ? el('span', { class: 'dbi' }, icon(ic, 18)) : typeof dbIco === 'function' ? dbIco(ic, 18) : null, el('b', {}, t, tag ? el('em', { class: 'ai-tag' }, tag) : null), el('span', {}, d))));
+      draw();
+      return box;
+    };
+    const themeRow = () => {
+      const box = el('div', { class: 'ai-themes' });
+      const draw = () => box.replaceChildren(el('span', { class: 'muted small' }, 'Theme'),
+        el('button', { type: 'button', class: `ai-th auto${!look.theme ? ' on' : ''}`, onClick: () => { look.theme = ''; draw(); }, title: 'Matches the style you picked' }, 'Auto'),
+        ...(typeof DB_THEME_DEFS === 'object' ? DB_THEME_DEFS.filter((t) => t.pick) : []).map((t) => el('button', { type: 'button', class: `ai-th${look.theme === t.id ? ' on' : ''}`, title: t.name, 'aria-label': t.name,
+          onClick: () => { look.theme = t.id; draw(); }, style: { background: /gradient/.test(t.v.bg) ? t.v.card : t.v.bg, borderColor: t.p[0] } }, el('i', { style: { background: t.p[0] } }), el('i', { style: { background: t.p[1] } }), el('i', { style: { background: t.p[2] } }))));
+      draw();
+      return box;
+    };
     const step1 = () => {
-      const ta = el('textarea', { class: 'field ai-prompt', rows: 8, placeholder: 'What should the dashboard help you decide? Mention KPIs, charts, filters or pages you want — anything you leave out, AI decides.' }, prompt);
+      const ta = el('textarea', { class: 'field ai-prompt', rows: 3, placeholder: 'Optional — what should it help you decide? e.g. “sales by outlet and category, discounts lower is better”' }, prompt);
       ta.addEventListener('input', () => { prompt = ta.value; });
       const schemaSel = el('select', { class: 'field', 'aria-label': 'Schema' }, el('option', { value: '' }, 'All schemas'), schemas.map((s2) => el('option', { value: s2, selected: s2 === schema }, s2)));
       const list = el('div', { class: 'ai-tables' });
-      const search = el('input', { class: 'field', type: 'search', placeholder: 'Search tables…' });
+      const search = el('input', { class: 'field', type: 'search', placeholder: 'Search tables…', 'aria-label': 'Search tables' });
       const count = el('span', { class: 'muted small' });
       const drawTables = () => {
         const q = search.value.toLowerCase();
         const items = meta.tables.filter((t) => (!schema || t.startsWith(`${schema}.`)) && (!q || t.toLowerCase().includes(q))).slice(0, 300);
-        count.textContent = chosen.size ? `${chosen.size} selected` : 'none selected — AI picks from your prompt';
+        count.textContent = chosen.size ? `${chosen.size} selected` : 'None selected — AI picks from your words';
         list.replaceChildren(...(items.length ? items.map((t) => el('label', { class: 'switch' },
           el('input', { type: 'checkbox', checked: chosen.has(t), onChange: (e) => { if (e.target.checked) chosen.add(t); else chosen.delete(t); drawTables(); } }),
           el('span', { class: 'mono' }, schema ? t.split('.').slice(1).join('.') : t)))
-          : [el('p', { class: 'muted small' }, meta.tables.length ? 'No tables match.' : 'No tables found in the catalog — name them in your prompt (e.g. gold.sales).')]));
+          : [el('p', { class: 'muted small' }, meta.tables.length ? 'No tables match.' : 'No tables found in the catalog — name them in the box (e.g. gold.sales).')]));
       };
       schemaSel.addEventListener('change', () => { schema = schemaSel.value; chosen.clear(); if (schema) meta.tables.filter((t) => t.startsWith(`${schema}.`)).forEach((t) => chosen.add(t)); drawTables(); });
       search.addEventListener('input', drawTables); drawTables();
-      const ai = el('input', { type: 'checkbox', checked: useAi, onChange: (e) => { useAi = e.target.checked; } });
+      const aiRow = el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: useAi, onChange: (e) => { useAi = e.target.checked; } }), 'Let AI (Dora) choose the charts — off uses the built-in designer, no AI key needed');
+      const animRow = el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: look.animate, onChange: (e) => { look.animate = e.target.checked; } }), 'Animated charts — bar races, lines that draw themselves, maps that play');
       const status = el('div', { class: 'ai-status', role: 'status', 'aria-live': 'polite' });
-      const go = btn('Next: data model', async () => {
-        go.disabled = true;
-        const steps = ['Reading the schema…', 'Profiling columns and values…', 'Finding relationships between tables…', 'Checking keys and totals…'];
+      const busy = (steps, ms) => {
         let k = 0; status.className = 'ai-status busy'; status.textContent = steps[0];
-        const timer = setInterval(() => { k = Math.min(k + 1, steps.length - 1); status.textContent = steps[k]; }, 1800);
+        const t = setInterval(() => { k = Math.min(k + 1, steps.length - 1); status.textContent = steps[k]; }, ms);
+        return () => clearInterval(t);
+      };
+      const fail = (stop, e) => { stop(); status.className = 'ai-status err'; status.textContent = e.message; quick.disabled = false; go.disabled = false; };
+      const buildBoard = async () => {
+        const stop = busy(['Reading your tables…', 'Finding dates, locations and measures…', 'Placing locations on the globe…', 'Loading the numbers…'], 1800);
+        try {
+          const res = await api('/api/dashboards/ai/board', { method: 'POST', body: { prompt, tables: [...chosen], schema: chosen.size ? null : schema || null } });
+          stop(); close(true); location.href = res.url;
+        } catch (e) { fail(stop, e); }
+      };
+      const quick = btn('Build dashboard', async () => {
+        quick.disabled = true; go.disabled = true;
+        if (look.mode === 'board') { buildBoard(); return; }
+        const stop = busy(look.mode === 'overview' ? ['Reading your tables…', 'Finding dates, locations, measures and categories…', 'Summarising the data by day…', 'Checking every query…', 'Placing the globe, lists and insights…']
+          : ['Reading your tables…', 'Profiling columns and values…', 'Choosing KPIs and charts…', 'Writing and checking every query…', 'Applying the look…', 'Laying it out…'], 2000);
+        try {
+          const res = await api('/api/dashboards/ai/build', { method: 'POST', body: { prompt, tables: [...chosen], schema: chosen.size ? null : schema || null, use_ai: useAi && look.mode !== 'overview', style: styleBody() } });
+          stop();
+          sessionStorage.setItem(`db-ai-${res.id}`, JSON.stringify({ used_ai: res.used_ai, widgets: res.widgets, pages: res.pages, tables: res.tables, warnings: res.warnings || [] }));
+          close(true); location.hash = `#/dashboard/${res.id}`;
+        } catch (e) { fail(stop, e); }
+      }, { cls: 'primary', ic: 'flow' });
+      const go = btn('Review step by step', async () => {
+        go.disabled = true;
+        const stop = busy(['Reading the schema…', 'Profiling columns and values…', 'Finding relationships between tables…', 'Checking keys and totals…'], 1800);
         try {
           model = await api('/api/dashboards/ai/model', { method: 'POST', body: { prompt, tables: [...chosen], schema: chosen.size ? null : schema || null } });
           model.metrics = model.metrics || []; model.rules = model.rules || [];
-          clearInterval(timer); stepModel();
-        } catch (e) { clearInterval(timer); status.className = 'ai-status err'; status.textContent = e.message; go.disabled = false; }
-      }, { cls: 'primary', ic: 'flow' });
+          stop(); stepModel();
+        } catch (e) { fail(stop, e); }
+      }, { cls: 'sm' });
+      const more = el('details', { class: 'ai-more' }, el('summary', {}, 'More options'),
+        el('div', { class: 'stack', style: { gap: '10px' } }, themeRow(), animRow, aiRow,
+          el('div', { class: 'row', style: { gap: '6px', flexWrap: 'wrap', alignItems: 'center' } },
+            btn('Use the template', () => { ta.value = meta.template || ta.value; prompt = ta.value; ta.rows = 9; ta.focus(); }, { cls: 'sm' }),
+            ...DB_AI_EXAMPLES.map(([label, text]) => btn(label, () => { ta.value = text; prompt = text; ta.rows = 5; }, { cls: 'sm ghost' })), go),
+          opts.board ? null : el('p', { class: 'muted small', style: { margin: 0 } }, 'Want the full-page Overview app on this table instead? ',
+            el('a', { href: '#/dashboards?ai=1&board=1', onClick: () => close(null) }, 'Build a full-page Overview'), '.')));
+      const sync = () => { animRow.hidden = look.mode !== 'clean'; aiRow.hidden = look.mode === 'overview' || look.mode === 'board'; go.hidden = look.mode === 'board'; };
       root.replaceChildren(
-        el('div', { class: 'row' }, el('h2', { class: 'grow' }, 'Build a dashboard with AI'), el('span', { class: 'ai-steps' }, el('b', {}, '1 Describe'), ' › 2 Data model › 3 Review › 4 Create'), btn('Close', () => close(null), { cls: 'sm' })),
-        el('p', { class: 'muted' }, 'Pick a schema (or tables). Next you check the data model (ERD, joins, business context, reconciliation), then AI designs the dashboard — you review before anything is created.'),
-        el('div', { class: 'ai-grid' },
-          el('div', { class: 'stack', style: { gap: '8px' } }, ta,
-            el('div', { class: 'row', style: { gap: '6px', flexWrap: 'wrap' } },
-              btn('Use the template', () => { ta.value = meta.template || ta.value; prompt = ta.value; ta.focus(); }, { cls: 'sm' }),
-              ...DB_AI_EXAMPLES.map(([label, text]) => btn(label, () => { ta.value = text; prompt = text; }, { cls: 'sm ghost' })))),
-          el('div', { class: 'stack', style: { gap: '8px' } }, el('b', {}, 'Data'), schemaSel, search, list, count)),
-        el('label', { class: 'switch' }, ai, 'Use AI (Dora) — off uses the built-in designer, no AI key needed'),
-        status, el('div', { class: 'actions' }, go));
-      setTimeout(() => ta.focus(), 0);
+        el('div', { class: 'row' }, el('h2', { class: 'grow' }, 'Build a dashboard with AI'), btn('Close', () => close(null), { cls: 'sm' })),
+        el('p', { class: 'muted', style: { margin: '0 0 4px' } }, 'Pick your table and a style. DataBridge AI writes the queries, picks the widgets and lays out the page — everything stays editable.'),
+        el('div', { class: 'lbl' }, 'Style', styleCards(sync)),
+        el('div', { class: 'ai-grid ai-grid2' },
+          el('div', { class: 'stack', style: { gap: '8px' } }, el('b', {}, 'Data'), schemaSel, search, list, count),
+          el('div', { class: 'stack', style: { gap: '8px' } }, el('b', {}, 'Anything specific?'), ta)),
+        more, status, el('div', { class: 'actions' }, quick));
+      sync();
+      setTimeout(() => search.focus(), 0);
     };
     const stepModel = () => {
       const M = model;
@@ -278,7 +424,7 @@ async function dbAiDialog(opts = {}) {
         let k = 0; status.className = 'ai-status busy'; status.textContent = steps[0];
         const timer = setInterval(() => { k = Math.min(k + 1, steps.length - 1); status.textContent = steps[k]; }, 2200);
         try {
-          plan = await api('/api/dashboards/ai/plan', { method: 'POST', body: { prompt, tables: M.tables, use_ai: useAi, context: ctxBody() } });
+          plan = await api('/api/dashboards/ai/plan', { method: 'POST', body: { prompt, tables: M.tables, use_ai: useAi, context: ctxBody(), style: styleBody() } });
           plan.keep = new Set(plan.definition.widgets.map((w) => w.id));
           clearInterval(timer); step2();
         } catch (e) { clearInterval(timer); status.className = 'ai-status err'; status.textContent = e.message; go.disabled = false; }
@@ -410,23 +556,23 @@ function dbAutoWidgets(ds, cols, rows) {
   const nums = cols.filter((_, i) => kinds[i] === 'num');
   const cats = cols.filter((_, i) => kinds[i] === 'cat');
   const dates = cols.filter((_, i) => kinds[i] === 'date');
-  const nice = (c) => dbCap(c.replace(/_/g, ' '));
+  const nice = (c) => (typeof dbHuman === 'function' ? dbHuman(c) : dbCap(c.replace(/_/g, ' ')));
   const pages = [{ id: 'p1', name: 'Overview' }, { id: 'p2', name: 'Details' }];
   const w = [{ id: dbUid('w'), page: 'p1', type: 'insights', title: 'Smart insights', layout: { x: 0, y: 0, w: 3, h: 4 } }];
   const kpis = [];
   nums.slice(0, 4).forEach((n) => kpis.push({ title: nice(n), y: [n], agg: 'sum', format: /amount|sales|revenue|price|value|total|cost|discount|refund/i.test(n) ? 'currency_compact' : 'compact',
     lowerBetter: /discount|refund|cost|return|void|cancel/i.test(n) }));
-  if (nums.length) kpis.push({ title: `Average ${nums[0].replace(/_/g, ' ')}`, y: [nums[0]], agg: 'avg', format: 'compact' });
+  if (nums.length) kpis.push({ title: `Avg ${nice(nums[0]).toLowerCase()}`, y: [nums[0]], agg: 'avg', format: 'compact' });
   kpis.push({ title: 'Records', y: [cols[0]], agg: 'count', format: 'integer' });
   kpis.slice(0, 6).forEach((k, i) => w.push({ id: dbUid('w'), page: 'p1', type: 'kpi', dataset: ds, ...k, layout: { x: 3 + (i % 3) * 3, y: Math.floor(i / 3) * 2, w: 3, h: 2 } }));
   let y = 4;
   if (dates.length && nums.length) w.push({ id: dbUid('w'), page: 'p1', type: 'line', title: `${nice(nums[0])} over time`, dataset: ds, x: dates[0], y: [nums[0]], agg: 'sum', format: 'compact', ml: { forecast: 7, anomalies: true }, layout: { x: 0, y, w: cats.length ? 8 : 12, h: 4 } });
-  if (cats.length && nums.length) w.push({ id: dbUid('w'), page: 'p1', type: 'hbar', title: `${nice(nums[0])} by ${cats[0].replace(/_/g, ' ')}`, dataset: ds, x: cats[0], y: [nums[0]], agg: 'sum', sort: 'value_desc', top: 10, format: 'compact', layout: { x: dates.length ? 8 : 0, y, w: dates.length ? 4 : 6, h: 4 } });
+  if (cats.length && nums.length) w.push({ id: dbUid('w'), page: 'p1', type: 'hbar', title: `${nice(nums[0])} by ${nice(cats[0]).toLowerCase()}`, dataset: ds, x: cats[0], y: [nums[0]], agg: 'sum', sort: 'value_desc', top: 10, format: 'compact', layout: { x: dates.length ? 8 : 0, y, w: dates.length ? 4 : 6, h: 4 } });
   y += 4;
-  cats.slice(1, 3).forEach((c, i) => nums.length && w.push({ id: dbUid('w'), page: 'p1', type: 'pie', title: `${nice(nums[0])} by ${c.replace(/_/g, ' ')}`, dataset: ds, x: c, y: [nums[0]], agg: 'sum', top: 8, format: 'compact', layout: { x: i * 4, y, w: 4, h: 4 } }));
+  cats.slice(1, 3).forEach((c, i) => nums.length && w.push({ id: dbUid('w'), page: 'p1', type: i === 0 ? 'pie' : 'bar', title: `${nice(nums[0])} by ${nice(c).toLowerCase()}`, dataset: ds, x: c, y: [nums[0]], agg: 'sum', top: 6, sort: 'value_desc', format: 'compact', layout: { x: i * 6, y, w: 6, h: 4 } }));
   w.push({ id: dbUid('w'), page: 'p2', type: 'table', title: 'All records', dataset: ds, columns: cols.slice(0, 10), layout: { x: 0, y: 0, w: 12, h: 7 } });
   const period = dates.length ? { preset: 'last_7_days', compare: true, column: dates[0], anchor: 'data' } : { preset: 'all', compare: true, column: '', anchor: 'data' };
-  return { widgets: w, pages, period, timeColumn: dates[0] || '__none__', theme: 'vivid' };
+  return { widgets: w, pages, period, timeColumn: dates[0] || '__none__', theme: 'auto', look: 'clean', kpiStyle: 'clean', motion: 'subtle' };
 }
 function dbAutoFilters(ds, cols, rows) {
   const kinds = dbColumnKinds(cols, rows);
@@ -438,7 +584,7 @@ function dbAutoFilters(ds, cols, rows) {
 function dbMenu(label, items) {
   const list = el('div', { class: 'db-menu-list', role: 'menu' });
   const wrap = el('details', { class: 'db-menu' }, el('summary', { class: 'btn', 'aria-haspopup': 'menu' }, label, el('span', { class: 'db-menu-caret', 'aria-hidden': 'true' }, '▾')), list);
-  items.filter(Boolean).forEach(([t, ic, fn]) => list.append(el('button', { type: 'button', role: 'menuitem', class: 'db-menu-item', onClick: () => { wrap.open = false; fn(); } }, ic ? icon(ic, 15) : null, t)));
+  items.filter(Boolean).forEach((it) => list.append(it instanceof Node ? it : el('button', { type: 'button', role: 'menuitem', class: 'db-menu-item', onClick: () => { wrap.open = false; it[2](); } }, it[1] ? icon(it[1], 15) : null, it[0])));
   document.addEventListener('pointerdown', (e) => { if (wrap.open && !wrap.contains(e.target)) wrap.open = false; });
   wrap.addEventListener('keydown', (e) => { if (e.key === 'Escape') { wrap.open = false; wrap.querySelector('summary').focus(); } });
   return wrap;
@@ -449,9 +595,12 @@ async function viewDashboard(main, r) {
   main.classList.add('flush');
   let dash;
   try { dash = await api(`/api/dashboards/${did}`); } catch (e) { main.append(errBox(e)); return () => main.classList.remove('flush'); }
+  if (dash.definition && dash.definition.kind === 'overview') { location.replace(`/static/overview/index.html?board=${encodeURIComponent(did)}#/`); return () => main.classList.remove('flush'); }
   const canEdit = !CURRENT_USER || CURRENT_USER.role !== 'viewer';
   const S = { D: plClone(dash.definition), name: dash.name, edit: false, results: {}, errors: {}, fvals: {}, cross: null, charts: {},
-    selected: null, dirty: false, refreshTimer: null, loading: new Set(), options: {} };
+    selected: null, dirty: false, refreshTimer: null, loading: new Set(), options: {}, park: {}, play: {} };
+  if (typeof dbNormalizeDash === 'function') dbNormalizeDash(S.D);          // older widget types -> base type + options
+  try { if (typeof dbLoadEcharts === 'function') await dbLoadEcharts(false); } catch { /* charts fall back to the classic renderer */ }
   S.D.datasets = S.D.datasets || []; S.D.filters = S.D.filters || []; S.D.widgets = S.D.widgets || [];
   if (!S.D.pages || !S.D.pages.length) S.D.pages = [{ id: 'p1', name: 'Overview' }];
   S.D.widgets.forEach((w) => { if (!w.page || !S.D.pages.some((p) => p.id === w.page)) w.page = S.D.pages[0].id; });
@@ -538,9 +687,24 @@ async function viewDashboard(main, r) {
       const res = S.results[d.id], tc = tcol(d.id);
       const i = res && tc ? res.columns.indexOf(tc) : -1;
       if (i < 0) continue;
-      for (const r of res.rows) { const t = dbParseTime(r[i]); if (t != null && (max == null || t > max)) max = t; }
+      const k = dayKeys(res, i);
+      if (k.max != null && (max == null || k.max > max)) max = k.max;
     }
-    return max == null ? null : dbDay(max);
+    return max;
+  }
+  /* the day (YYYY-MM-DD) of every row's time value, worked out once per query result (big datasets stay fast) */
+  function dayKeys(res, i) {
+    if (res._dk && res._dk.i === i) return res._dk;
+    const d = new Array(res.rows.length);
+    let min = null, max = null;
+    for (let k = 0; k < res.rows.length; k++) {
+      const t = dbParseTime(res.rows[k][i]);
+      const v = t == null ? null : dbDay(t);
+      d[k] = v;
+      if (v != null) { if (max == null || v > max) max = v; if (min == null || v < min) min = v; }
+    }
+    Object.defineProperty(res, '_dk', { value: { i, d, min, max }, configurable: true, writable: true, enumerable: false });
+    return res._dk;
   }
   function windows() { return periodEnabled() ? dbWindows(S.D.period, anchorDate()) : { cur: null, prev: null }; }
   function clientRows(dsId, res, exceptWidget, win = 'cur') {
@@ -551,13 +715,16 @@ async function viewDashboard(main, r) {
     const pi = tc ? res.columns.indexOf(tc) : -1;
     const range = typeof win === 'object' && win ? win : win === 'prev' ? W.prev : W.cur;
     if (pi >= 0 && range) {
-      rows = rows.filter((r) => { const t = dbParseTime(r[pi]); if (t == null) return false; const d = dbDay(t); return d >= range.from && d <= range.to; });
+      const dk = dayKeys(res, pi).d;
+      rows = rows.filter((r, k) => { const d = dk[k]; return d != null && d >= range.from && d <= range.to; });
     } else if (win !== 'cur') return [];
+    const own = chooserCol(S.wf[exceptWidget]);
     for (const f of S.D.filters) {
       const v = S.fvals[f.id];
       if (v == null || v === '' || (Array.isArray(v) && !v.length)) continue;
       const fcol = (f.columnMap && f.columnMap[dsId]) || f.column;
       if (!fcol || !res.columns.includes(fcol)) continue;
+      if (f.link && own && fcol === own) continue;          // the chart that sets this filter keeps all its values; the choice is highlighted
       if (f.type === 'date_range' ? (sqlUses(ds, f.paramFrom) || sqlUses(ds, f.paramTo)) : sqlUses(ds, f.param)) continue;
       const i = res.columns.indexOf(fcol);
       if (f.type === 'date_range') rows = rows.filter((r) => { const t = dbParseTime(r[i]); const d = t == null ? '' : dbDay(t); return (!v.from || d >= v.from) && (!v.to || d <= v.to); });
@@ -574,6 +741,48 @@ async function viewDashboard(main, r) {
     const spec = S.wf[exceptWidget];
     if (spec) rows = applyWidgetFilters(spec, exceptWidget, res.columns, rows);
     return rows;
+  }
+  /* ---------- click to filter: a dashboard filter marked "link" is set by clicking a value of its column ---------- */
+  const CHOOSERS = new Set(['rank', 'catlist', 'pie', 'bar', 'hbar', 'funnel']);
+  function chooserCol(w) { return !w ? null : w.type === 'globe' ? (w.zone || null) : CHOOSERS.has(w.type) ? (w.x || null) : null; }
+  function linkedFilter(w, column) {
+    if (!column) return null;
+    return S.D.filters.find((f) => f.link && (!f.type || f.type === 'select') && ((f.columnMap && w && f.columnMap[w.dataset]) || f.column) === column) || null;
+  }
+  /* the value chosen for a column: the linked filter's value, or the click filter's */
+  function selectedValue(w, column) {
+    const f = linkedFilter(w, column);
+    const v = f ? S.fvals[f.id] : null;
+    if (v != null && v !== '') return String(v);
+    return S.cross && S.cross.column === column ? String(S.cross.value) : null;
+  }
+  function setFilterValue(f, value) {
+    S.fvals[f.id] = value;
+    S.cross = null;
+    drawFilters(); drawCross();
+    if (S.D.datasets.some((d) => sqlUses(d, f.param))) loadAll(); else drawGrid();
+  }
+  function choose(w, column, value) {
+    if (S.edit || value == null) return;
+    value = String(value);
+    const f = linkedFilter(w, column);
+    if (f) { setFilterValue(f, String(S.fvals[f.id] ?? '') === value ? '' : value); return; }
+    S.cross = S.cross && S.cross.value === value && S.cross.column === column ? null : { column, value, widget: w.id };
+    setTimeout(() => { drawCross(); drawGrid(); }, 0);
+  }
+  /* context for the Overview widgets (dash_overview.js) */
+  function ovCtx(w) {
+    const res = S.results[w.dataset];
+    const level = typeof dbMotionLevel === 'function' ? dbMotionLevel(S.D) : 'subtle';
+    return { fmt: (v) => dbFmt(v, w.format || 'compact', cur()), dark: !!theme().dark, edit: S.edit,
+      reduced: !!S.printing || level === 'off' || matchMedia('(prefers-reduced-motion: reduce)').matches,
+      wide: ((w.layout || {}).w || 6) >= 6 && window.innerWidth > 760,
+      selected: (column) => selectedValue(w, column),
+      choose: (column, value) => choose(w, column, value),
+      prevRows: () => (res && windows().prev && tcol(w.dataset) ? clientRows(w.dataset, res, w.id, 'prev') : null),
+      dataSpan: () => { const tc = tcol(w.dataset); const i = res && tc ? res.columns.indexOf(tc) : -1; if (i < 0) return null; const k = dayKeys(res, i); return k.min ? [k.min, k.max] : null; },
+      claim: (key) => { const e = (S.park || {})[key]; if (e) delete S.park[key]; return e || null; },
+      register: (key, entry) => { if (S.charts[key] && S.charts[key] !== entry) { try { S.charts[key].destroy(); } catch { /* gone */ } } S.charts[key] = entry; } };
   }
 
   /* ---------- data loading ---------- */
@@ -669,25 +878,29 @@ async function viewDashboard(main, r) {
     const refreshSel = el('select', { class: 'field dash-refresh', 'aria-label': 'Auto-refresh' },
       [[0, 'Auto-refresh off'], [-1, 'Live — when data changes'], [1, 'Every minute'], [5, 'Every 5 min'], [15, 'Every 15 min'], [60, 'Every hour']].map(([v, t]) => el('option', { value: v, selected: Number(S.D.refreshMinutes || 0) === v }, t)));
     refreshSel.addEventListener('change', () => { S.D.refreshMinutes = Number(refreshSel.value); setAutoRefresh(); if (canEdit) save(true); });
+    const styleBtn = canEdit ? el('button', { type: 'button', class: `btn${S.side === 'style' && !side.hidden ? ' on' : ''}`, title: 'Theme, motion, 2D / 3D', onClick: () => openSide('style') },
+      typeof dbIco === 'function' ? dbIco('style', 16) : null, 'Style') : null;
     if (!S.edit) {
       const more = dbMenu('More', [
+        el('label', { class: 'db-menu-field' }, el('span', {}, 'Auto-refresh'), refreshSel),
         ['Ask Dora', 'flow', () => dbAskDora()],
         ['Data model & checks', 'db', () => dbModelDialog(did, { name: S.name, definition: S.D })],
         [S.D.fitScreen ? 'Scroll page (no fit)' : 'Fit to screen', 'fold', () => { S.D.fitScreen = !S.D.fitScreen; if (canEdit) save(true); drawBar(); drawGrid(); }],
         [S.app ? 'Exit app view' : 'App view (full screen)', 'ext', () => { S.app = !S.app; document.body.classList.toggle('dash-app', S.app); history.replaceState(null, '', `#/dashboard/${did}${S.app ? '?app=1' : ''}`); setTimeout(() => Object.values(S.charts).forEach((c) => c.resize()), 50); drawBar(); }],
       ]);
-      setKids(bar, refreshSel,
-        btn('Refresh', () => loadAll(true), { ic: 'restart' }),
+      setKids(bar, styleBtn,
+        btn('', () => loadAll(true), { ic: 'restart', cls: 'icon-only', title: 'Refresh the data' }),
+        btn('', () => exportPdf(), { ic: 'download', cls: 'icon-only', title: 'Export PDF — every page on A4 landscape' }),
         !dbFeat('dashboards_present') ? null : btn('Present', () => presentStory(), { cls: 'present-btn', ic: 'play', title: 'AI turns this page into slides and explains what is happening' }),
-        btn('Export PDF', () => exportPdf(), { ic: 'download', title: 'Every page, laid out for A4 landscape' }),
         more,
         canEdit ? btn('Edit', () => { S.edit = true; drawAll(); }, { cls: 'primary', ic: 'edit' }) : null);
     } else {
-      const addMenu = el('select', { class: 'field dash-add', 'aria-label': 'Add widget' }, el('option', { value: '' }, '+ Add widget'),
-        Object.entries(DB_TYPES).map(([k, t]) => el('option', { value: k }, t)));
-      addMenu.addEventListener('change', () => { if (addMenu.value) addWidget(addMenu.value); addMenu.value = ''; });
-      setKids(bar, addMenu, btn('Datasets', () => openSide('datasets'), { ic: 'db' }), btn('Filters', () => openSide('filters'), { ic: 'fold' }),
-        btn('Settings', () => openSide('settings'), { ic: 'gear' }),
+      const addBtn = btn('Add chart', async () => {
+        const t = typeof dbChartPickerDialog === 'function' ? await dbChartPickerDialog() : 'bar';
+        if (t) addWidget(t);
+      }, { ic: 'plus' });
+      setKids(bar, addBtn, btn('Datasets', () => openSide('datasets'), { ic: 'db' }), btn('Filters', () => openSide('filters'), { ic: 'fold' }),
+        styleBtn, btn('Settings', () => openSide('settings'), { ic: 'gear' }),
         btn('Tidy layout', () => { tidyLayout(); S.dirty = true; drawGrid(); toast('Gaps removed'); }, { ic: 'fold', title: 'Move widgets up to fill empty space' }),
         btn('Done', async () => { await save(); S.edit = false; S.selected = null; drawAll(); }, { cls: 'primary', ic: 'save' }));
     }
@@ -711,7 +924,7 @@ async function viewDashboard(main, r) {
   function drawFilters() {
     if (!S.D.filters.length) { filterBar.hidden = true; return; }
     filterBar.hidden = false;
-    filterBar.replaceChildren(...S.D.filters.map((f) => {
+    setKids(filterBar, ...S.D.filters.map((f) => {
       const box = el('label', { class: 'dash-filter' }, el('span', {}, f.label || f.column || f.param));
       const apply = () => { S.cross = null; drawCross(); const sqlParam = S.D.datasets.some((d) => sqlUses(d, f.param) || sqlUses(d, f.paramFrom) || sqlUses(d, f.paramTo)); if (sqlParam) loadAll(); else drawGrid(); };
       if (f.type === 'date_range') {
@@ -730,11 +943,12 @@ async function viewDashboard(main, r) {
         const sel = el('select', { class: 'field', multiple: multi || null }, multi ? null : el('option', { value: '' }, 'All'));
         const cur = S.fvals[f.id];
         options(f).then((opts) => { sel.append(...opts.map((o) => el('option', { value: o, selected: multi ? (cur || []).includes(o) : cur === o }, o))); });
-        sel.addEventListener('change', () => { S.fvals[f.id] = multi ? [...sel.selectedOptions].map((o) => o.value) : sel.value; apply(); });
+        sel.addEventListener('change', () => { S.fvals[f.id] = multi ? [...sel.selectedOptions].map((o) => o.value) : sel.value; apply(); if (!multi) drawFilters(); });
         box.append(sel);
       }
       return box;
-    }), btn('Clear filters', () => { S.fvals = {}; S.cross = null; drawFilters(); drawCross(); loadAll(); }, { cls: 'sm ghost' }));
+    }), S.D.filters.some((f) => { const v = S.fvals[f.id]; return v != null && v !== '' && !(Array.isArray(v) && !v.length); }) || S.cross
+      ? btn('Clear', () => { S.fvals = {}; S.cross = null; drawFilters(); drawCross(); loadAll(); }, { cls: 'sm ghost dash-clear', ic: 'x', title: 'Clear every filter' }) : null);
   }
   function drawCross() {
     crossEl.hidden = !S.cross;
@@ -750,11 +964,18 @@ async function viewDashboard(main, r) {
   const pageWidgets = () => S.D.widgets.filter((w) => w.page === S.page);
   const dashRoot = () => main.querySelector('.dash');
   function themeVar(name, fallback) { const r = dashRoot(); const v = r ? getComputedStyle(r).getPropertyValue(name).trim() : ''; return v || fallback; }
+  function dashEntrance() {          // cinematic motion: cards rise in once, in a stagger
+    const r = dashRoot();
+    if (!r || S.printing || typeof dbMotionLevel !== 'function' || dbMotionLevel(S.D) !== 'cinematic') return;
+    r.classList.remove('mo-enter'); void r.offsetWidth; r.classList.add('mo-enter');
+    setTimeout(() => r.classList.remove('mo-enter'), 2200);
+  }
   function applyLook() { const r = dashRoot(); if (!r) return; r.classList.remove('fit'); dbApplyThemeTo(r, theme(), S.D.fitScreen && !S.edit ? 'fit' : ''); }
   function drawPages() {
     const tabs = S.D.pages.map((p) => {
+      const ic = /^overview/i.test(p.name) ? 'overview' : /analytic/i.test(p.name) ? 'analytics' : /insight/i.test(p.name) ? 'spark' : /report|detail/i.test(p.name) ? 'report' : null;
       const b = el('button', { type: 'button', class: 'dash-tab', 'aria-current': p.id === S.page ? 'page' : null,
-        onClick: () => { if (S.page !== p.id) { S.page = p.id; S.cross = null; drawCross(); drawPages(); drawGrid(); } } }, p.name);
+        onClick: () => { if (S.page !== p.id) { S.page = p.id; S.cross = null; drawCross(); drawPages(); drawGrid(); } } }, ic ? icon(ic, 16) : null, p.name);
       if (S.edit) b.addEventListener('dblclick', async () => {
         const v = await formDialog({ title: 'Rename page', submit: 'Rename', fields: [{ name: 'name', label: 'Page name', value: p.name }] });
         if (v && v.name.trim()) { p.name = v.name.trim(); S.dirty = true; drawPages(); }
@@ -776,30 +997,53 @@ async function viewDashboard(main, r) {
       S.edit ? el('span', { class: 'muted dash-tab-hint' }, 'Double-click a tab to rename it') : null);
     pagesBar.hidden = S.D.pages.length < 2 && !S.edit;
   }
+  /* one date filter for every tab: a pill like the Overview's date picker; presets, custom range and compare in a popover */
+  const DB_PRESET_ORDER = ['last_7_days', 'last_14_days', 'last_30_days', 'last_90_days', 'last_12_months', 'this_month', 'last_month', 'last_week', 'all', 'custom'];
   function drawPeriod() {
     const p = S.D.period;
     if (!periodEnabled()) { periodEl.hidden = true; return; }
     periodEl.hidden = false;
-    const sel = el('select', { class: 'field', 'aria-label': 'Period' }, Object.entries(DB_PERIODS).map(([k, t]) => el('option', { value: k, selected: p.preset === k }, t)));
-    sel.addEventListener('change', () => { p.preset = sel.value; if (canEdit && S.edit) S.dirty = true; drawPeriod(); drawGrid(); });
-    const cmp = el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: p.compare !== false, onChange: (e) => { p.compare = e.target.checked; drawPeriod(); drawGrid(); } }), 'Compare with previous period');
-    const kids = [el('span', { class: 'dash-period-lbl' }, 'Period'), sel];
-    if (p.preset === 'custom') {
-      const a = el('input', { type: 'date', class: 'field', value: p.from || '', 'aria-label': 'From' });
-      const b2 = el('input', { type: 'date', class: 'field', value: p.to || '', 'aria-label': 'To' });
-      const set = () => { p.from = a.value; p.to = b2.value; drawPeriod(); drawGrid(); };
-      a.addEventListener('change', set); b2.addEventListener('change', set);
-      kids.push(a, el('span', { class: 'muted' }, 'to'), b2);
-    }
-    if (p.preset !== 'all') kids.push(cmp);
     const W = windows();
-    if (W.cur) kids.push(el('span', { class: 'dash-period-range' }, `${dbShortDate(W.cur.from)} – ${dbShortDate(W.cur.to)}`,
-      W.prev ? el('span', { class: 'muted' }, `  vs ${dbShortDate(W.prev.from)} – ${dbShortDate(W.prev.to)}`) : null));
-    setKids(periodEl, ...kids);
+    const span = (r) => {                                 // "29 Sept – 28 Oct", or "Nov 2025 – Oct 2026" for long ranges
+      const long = dbDays(r.from, r.to) > 62 || r.from.slice(0, 4) !== r.to.slice(0, 4);
+      const my = (iso) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+      return long ? `${my(r.from)} – ${my(r.to)}` : `${dbShortDate(r.from)} – ${dbShortDate(r.to)}`;
+    };
+    const apply = () => { if (canEdit && S.edit) S.dirty = true; drawPeriod(); drawGrid(); };
+    const cal = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg>';
+    const label = p.preset === 'custom' ? (W.cur ? span(W.cur) : 'Custom range') : DB_PERIODS[p.preset] || 'All dates';
+    const pill = el('button', { type: 'button', class: 'dp-pill', 'aria-haspopup': 'dialog', 'aria-expanded': 'false', title: 'Date range for every tab of this dashboard' },
+      el('span', { class: 'dp-ico', html: cal }),
+      el('span', { class: 'dp-txt' }, el('b', {}, label), W.cur ? el('small', {}, `${span(W.cur)}${W.prev ? ` · vs ${span(W.prev)}` : ''}`) : el('small', {}, 'Every date in the data')),
+      el('span', { class: 'dp-caret', 'aria-hidden': 'true' }, '▾'));
+    const from = el('input', { type: 'date', class: 'field', value: p.from || (W.cur && W.cur.from) || '', 'aria-label': 'From' });
+    const to = el('input', { type: 'date', class: 'field', value: p.to || (W.cur && W.cur.to) || '', 'aria-label': 'To' });
+    const setCustom = () => { if (from.value && to.value) { p.preset = 'custom'; p.from = from.value <= to.value ? from.value : to.value; p.to = from.value <= to.value ? to.value : from.value; close(); apply(); } };
+    from.addEventListener('change', setCustom); to.addEventListener('change', setCustom);
+    const pop = el('div', { class: 'dp-pop', role: 'dialog', 'aria-label': 'Date range', hidden: true },
+      el('div', { class: 'dp-list' }, DB_PRESET_ORDER.filter((k) => k !== 'custom').map((k) => el('button', { type: 'button', class: `dp-opt${p.preset === k ? ' on' : ''}`, 'aria-pressed': String(p.preset === k),
+        onClick: () => { p.preset = k; close(); apply(); } }, DB_PERIODS[k]))),
+      el('div', { class: 'dp-custom' }, el('span', {}, 'Custom range'), el('div', { class: 'row', style: { gap: '6px' } }, from, el('span', { class: 'muted' }, 'to'), to)),
+      el('label', { class: 'switch dp-cmp' }, el('input', { type: 'checkbox', checked: p.compare !== false, onChange: (e) => { p.compare = e.target.checked; apply(); } }), 'Compare with the previous period'));
+    const outside = (e) => { if (!periodEl.contains(e.target)) close(); };
+    const esc = (e) => { if (e.key === 'Escape') { close(); pill.focus(); } };
+    function close() { pop.hidden = true; pill.setAttribute('aria-expanded', 'false'); document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', esc); }
+    pill.addEventListener('click', () => {
+      if (!pop.hidden) { close(); return; }
+      pop.hidden = false; pill.setAttribute('aria-expanded', 'true');
+      document.addEventListener('pointerdown', outside); document.addEventListener('keydown', esc);
+      (pop.querySelector('.dp-opt.on') || pop.querySelector('.dp-opt')).focus();
+    });
+    setKids(periodEl, pill, pop);
   }
   function drawGrid() {
-    Object.values(S.charts).forEach((c) => c.destroy());
+    if (!S._entered) { S._entered = true; setTimeout(dashEntrance, 0); }
+    S.park = S.park || {};
+    for (const [id, c] of Object.entries(S.charts)) {               // 2D charts are kept and re-used: filters and edits animate
+      if (c && c.reusable && !S.printing) S.park[id] = c; else { try { c.destroy(); } catch { /* gone */ } }
+    }
     S.charts = {};
+    const sweep = () => { for (const c of Object.values(S.park)) { try { c.destroy(); } catch { /* gone */ } } S.park = {}; };
     grid.classList.toggle('editing', S.edit);
     const ws = pageWidgets();
     if (!ws.length) {
@@ -807,6 +1051,7 @@ async function viewDashboard(main, r) {
         el('p', { class: 'muted' }, canEdit ? 'Add a dataset (your SQL), then add widgets — or ask Dora a question.' : 'An editor has not added widgets yet.'),
         canEdit ? el('div', { class: 'row', style: { gap: '8px', justifyContent: 'center' } },
           btn('Ask Dora', () => dbAskDora(), { cls: 'primary' }), btn('Edit dashboard', () => { S.edit = true; drawAll(); })) : null));
+      sweep();
       return;
     }
     const rowsUsed = Math.max(...ws.map((w) => (w.layout ? w.layout.y + w.layout.h : 4)));
@@ -822,6 +1067,37 @@ async function viewDashboard(main, r) {
     grid.classList.toggle('xdense', rowH < 46);
     grid.style.gridTemplateRows = `repeat(${rowsUsed + (S.edit ? 4 : 0)}, ${rowH}px)`;
     grid.replaceChildren(...ws.map(widgetEl));
+    sweep();
+  }
+  /* 2D | 3D on charts that have a 3D view; Flat | 3D | Globe on maps */
+  function setDim(w, d) {
+    w.dim = d;
+    if (d === '3d' && typeof dbIs3d === 'function' && !dbIs3d(w, S.D, pageWidgets())) toast(`Up to ${DB_MAX_3D} 3D charts per page — switch another chart to 2D first`, 'err');
+    if (d === '3d' && w.type === 'scatter' && !w.z) {                      // 3D bubbles need a third number
+      const res = S.results[w.dataset];
+      if (res) { const k = dbColumnKinds(res.columns, res.rows); w.z = res.columns.find((c, i) => k[i] === 'num' && c !== w.x && !(w.y || []).includes(c) && c !== w.size) || null; }
+    }
+    if (canEdit) { S.dirty = true; if (!S.edit) save(true); }
+    drawGrid(); if (S.edit && S.selected === w.id) openSide('widget');
+  }
+  function setView(w, v) {
+    w.view = v;
+    if (canEdit) { S.dirty = true; if (!S.edit) save(true); }
+    drawGrid(); if (S.edit && S.selected === w.id) openSide('widget');
+  }
+  function viewSwitch(w) {
+    const seg = (opts, cur, onPick, label) => {
+      const box = el('span', { class: `w-seg${cur !== '2d' && cur !== 'flat' ? ' active' : ''}`, role: 'group', 'aria-label': label });
+      opts.forEach(([v, t]) => box.append(el('button', { type: 'button', class: v === cur ? 'on' : '', 'aria-pressed': String(v === cur), title: `Show as ${t}`,
+        onClick: (e) => { e.stopPropagation(); if (v !== cur) onPick(v); } }, t)));
+      box.addEventListener('pointerdown', (e) => e.stopPropagation());
+      return box;
+    };
+    if (w.type === 'map') return seg([['flat', 'Flat'], ['3d', '3D'], ['globe', 'Globe']], dbMapView(w, S.D), (v) => setView(w, v), 'Map view');
+    if (w.type === 'globe') return seg([['globe', '3D Globe'], ['map', '2D Map']], w.view === 'map' ? 'map' : 'globe', (v) => setView(w, v), 'Globe view');
+    if (!DB_3D_TYPES.has(w.type) || w._compact) return null;
+    const want = (w.dim || S.D.dim || '2d') === '3d';
+    return seg([['2d', '2D'], ['3d', '3D']], want ? '3d' : '2d', (v) => setDim(w, v), 'Chart view');
   }
   function widgetEl(w) {
     S.wf[w.id] = w;
@@ -829,11 +1105,13 @@ async function viewDashboard(main, r) {
     const card = el('article', { class: `dash-w t-${w.type}${S.selected === w.id ? ' sel' : ''}`, style: p, 'data-id': w.id });
     const res = w.dataset ? S.results[w.dataset] : null;
     const err = w.dataset ? S.errors[w.dataset] : null;
+    const ico = (n) => (typeof dbIco === 'function' ? dbIco(n, 15) : null);
     const menu = el('div', { class: 'dash-w-menu' },
-      res && w.type !== 'text' ? el('button', { type: 'button', title: 'Download CSV', 'aria-label': 'Download CSV', onClick: () => csvOf(w) }, 'CSV') : null,
-      S.charts && ['bar', 'hbar', 'line', 'area', 'pie'].includes(w.type) ? el('button', { type: 'button', title: 'Download image', 'aria-label': 'Download PNG', onClick: () => pngOf(w) }, 'PNG') : null,
-      res && ['kpi', 'bar', 'hbar', 'line', 'area', 'pie'].includes(w.type) ? el('button', { type: 'button', class: 'dora-mini', title: 'Ask Dora about this', 'aria-label': 'Ask Dora about this widget', onClick: () => doraExplain('widget', w) }, 'Ask Dora') : null,
-      w.dataset ? el('button', { type: 'button', title: 'View SQL', 'aria-label': 'View SQL', onClick: () => plJsonDialog(`${w.title || 'Widget'} — SQL`, (S.D.datasets.find((d) => d.id === w.dataset) || {}).sql || '') }, 'SQL') : null);
+      res && w.type !== 'text' ? el('button', { type: 'button', title: 'Download data (CSV)', 'aria-label': 'Download data as CSV', onClick: () => csvOf(w) }, ico('dl')) : null,
+      ['bar', 'hbar', 'line', 'area', 'pie', 'funnel', 'scatter', 'heatmap', 'sankey'].includes(w.type) ? el('button', { type: 'button', title: 'Download image (PNG)', 'aria-label': 'Download image', onClick: () => pngOf(w) }, ico('img')) : null,
+      res && ['kpi', 'bar', 'hbar', 'line', 'area', 'pie', 'funnel', 'rank', 'catlist'].includes(w.type) ? el('button', { type: 'button', class: 'dora-mini', title: 'Ask Dora about this', 'aria-label': 'Ask Dora about this widget', onClick: () => doraExplain('widget', w) }, ico('ask')) : null,
+      w.dataset ? el('button', { type: 'button', title: 'View SQL', 'aria-label': 'View SQL', onClick: () => plJsonDialog(`${w.title || 'Widget'} — SQL`, (S.D.datasets.find((d) => d.id === w.dataset) || {}).sql || '') }, ico('code')) : null);
+    const viewSw = res && typeof DB_3D_TYPES === 'object' ? viewSwitch(w) : null;
     const ctrls = (w.filterControls || []).length && res ? el('div', { class: 'w-filters' }, w.filterControls.filter((c) => res.columns.includes(c)).map((col) => {
       const i = res.columns.indexOf(col);
       const freq = new Map();
@@ -849,7 +1127,7 @@ async function viewDashboard(main, r) {
     const pinned = (w.where || []).filter((c) => c.column && c.value !== '' && c.value != null);
     const head = el('header', { class: 'dash-w-head' }, el('h3', {}, w.title || DB_TYPES[w.type]),
       pinned.length && w.type !== 'kpi' ? el('span', { class: 'w-pinned', title: pinned.map((c) => `${c.column} ${c.op || 'eq'} ${c.value}`).join(' and ') }, `${pinned.length} filter${pinned.length > 1 ? 's' : ''}`) : null,
-      ctrls, menu);
+      ctrls, viewSw, menu);
     const body = el('div', { class: 'dash-w-body' });
     card.append(head, body);
     if (S.edit) {
@@ -862,45 +1140,113 @@ async function viewDashboard(main, r) {
     if (!w.dataset) { body.append(el('p', { class: 'muted dash-msg' }, S.edit ? 'Choose a dataset for this widget.' : 'No data source.')); return card; }
     if (err) { body.append(el('div', { class: 'error-box dash-msg' }, err)); return card; }
     if (!res) { body.append(el('div', { class: 'dash-skel' })); return card; }
+    if (['rank', 'catlist', 'globe'].includes(w.type) && (!w.x || !(w.y || []).length)) { typeDefaults(w, res); S.dirty = true; }   // added before its data had loaded
     const rows = clientRows(w.dataset, res, w.id);
     try { renderWidget(w, res.columns, rows, body); }
     catch (e2) { body.replaceChildren(el('p', { class: 'muted dash-msg' }, `Check this widget's settings: ${e2.message}`)); }
+    if (w.type === 'kpi' && !S.printing && typeof dbCountUp === 'function' && dbMotionLevel(S.D) !== 'off') {   // numbers count up
+      const v = body.querySelector('.kpi-v');
+      const k = kpiValues(w);
+      S.kpiLast = S.kpiLast || {};
+      if (v && dbIsNum(k.cur) && S.kpiLast[w.id] !== k.cur) {
+        v.dataset.dbFrom = String(S.kpiLast[w.id] ?? 0);
+        dbCountUp(v, k.cur, (x) => dbFmt(x, w.format || 'compact', cur()));
+      }
+      S.kpiLast[w.id] = k.cur;
+    }
     return card;
   }
+  function motionCtx(w) {
+    return { D: S.D, printing: !!S.printing, theme, pal, themeVar, cur, timeColumn: tcol(w.dataset),
+      font: ((themeVar('--d-font', '') || '').replace(/^inherit$/, '') || "'IBM Plex Sans'") + ', system-ui, sans-serif',
+      register: (id, obj) => { if (S.charts[id]) { try { S.charts[id].destroy(); } catch { /* gone */ } } S.charts[id] = obj; } };
+  }
+  /* context for the chart engine (dash_charts.js) */
+  function ecCtx(w) {
+    const parent = w._panel ? S.D.widgets.find((x) => x.id === w._panel) : null;
+    return { D: S.D, printing: !!S.printing, edit: S.edit, compact: !!w._compact, T: theme(), P: pal(), cur: cur(), CS: dbChartStyle(S.D, theme()),
+      font: ((themeVar('--d-font', '') || '').replace(/^inherit$/, '') || "'IBM Plex Sans'") + ', system-ui, sans-serif',
+      tv: themeVar, level: S.printing ? 'off' : (typeof dbMotionLevel === 'function' ? dbMotionLevel(S.D) : 'subtle'),
+      park: S.park || (S.park = {}), play: S.play || (S.play = {}),
+      cross: (() => { const c = chooserCol(w); const v = c ? linkedFilter(w, c) && selectedValue(w, c) : null; return v != null ? { column: c, value: v, widget: w.id } : S.cross; })(),
+      register: (id, entry) => { if (S.charts[id] && S.charts[id] !== entry) { try { S.charts[id].destroy(); } catch { /* gone */ } } S.charts[id] = entry; },
+      group: parent && parent.syncHover !== false ? `pnl-${parent.id}` : null,
+      pick: (column, value) => choose(w, column, value) };
+  }
+  const ecReady = () => typeof dbEcRender === 'function' && typeof echarts === 'object';
+  const is3d = (w) => typeof dbIs3d === 'function' && !w._compact && dbIs3d(w, S.D, pageWidgets());
   function renderWidget(w, cols, rows, body) {
+    if (typeof dbNormalizeWidget === 'function') dbNormalizeWidget(w);
+    if (typeof DB_MOTION_TYPES === 'object' && DB_MOTION_TYPES[w.type] && w.type !== 'twin3d') { dbMotionRender(motionCtx(w), w, cols, rows, body); return; }
+    if (w.type === 'map') {
+      const v = dbMapView(w, S.D);
+      dbGeoRender(motionCtx(w), { ...w, type: v === 'globe' ? 'globe3d' : v === '3d' ? 'map3d' : 'map2d', time: w.play || null, grain: w.playGrain || 'month' }, cols, rows, body);
+      return;
+    }
+    if (w.type === 'twin3d') { dbGeoRender(motionCtx(w), w, cols, rows, body); return; }
+    if (w.type === 'rank') { dbOvRank(ovCtx(w), w, cols, rows, body); return; }
+    if (w.type === 'catlist') { dbOvCats(ovCtx(w), w, cols, rows, body); return; }
+    if (w.type === 'globe') { dbOvGlobe(ovCtx(w), w, cols, rows, body); return; }
+    if (['scatter', 'heatmap', 'sankey'].includes(w.type)) {
+      if (is3d(w)) { dbRender3D(ecCtx(w), motionCtx(w), w, cols, rows, null, body); return; }
+      if (ecReady()) { dbEcRender(ecCtx(w), w, { cols, rows }, body); return; }
+      body.append(el('p', { class: 'muted dash-msg' }, 'The chart library did not load — reload the page.'));
+      return;
+    }
     if (w.type === 'kpi') {
       const k = kpiValues(w);
       const card = body.parentElement;
-      const tone = k.change == null || Math.abs(k.change) < 0.01 ? 'flat' : ((k.change > 0) !== !!w.lowerBetter ? 'good' : 'bad');
-      const kstyle = w._panel ? 'tinted' : (w.kpiStyle || S.D.kpiStyle || 'tinted');
-      card.classList.remove('good', 'bad', 'flat', 'kpi-gradient', 'kpi-gauge', 'kpi-spark-line', 'kpi-ring', 'kpi-minimal', 'kpi-accent'); card.classList.add(tone);
+      const tone = k.change == null || Math.abs(k.change) < 0.005 ? 'flat' : ((k.change > 0) !== !!w.lowerBetter ? 'good' : 'bad');
+      let kstyle = w._panel ? 'clean' : (w.kpiStyle || S.D.kpiStyle || 'clean');
+      if (!DB_KPI_STYLES[kstyle]) kstyle = { gradient: 'tiles' }[kstyle] || 'clean';
+      card.classList.remove('good', 'bad', 'flat', 'kpi-gradient', 'kpi-tiles', 'kpi-clean', 'kpi-gauge', 'kpi-spark-line', 'kpi-ring', 'kpi-minimal', 'kpi-accent', 'kpi-icon'); card.classList.add(tone);
       if (w._panel) card.classList.add('t-kpi');
-      const valueTxt = dbFmt(k.cur, w.format || 'compact', cur());
+      const fmtK = (v) => dbFmt(v, w.format || 'compact', cur());
+      const valueTxt = fmtK(k.cur);
       const full = dbIsNum(k.cur) ? dbFmt(k.cur, String(w.format || '').startsWith('currency') ? 'currency' : 'number', cur()) : '';
-      const badge = k.change != null ? el('span', { class: `kpi-badge ${tone}`, title: `Change vs ${k.label || 'previous period'}` }, `${k.change > 0 ? '▲ +' : '▼ '}${(k.change * 100).toFixed(1)}%`) : null;
-      const prevLine = k.prev != null ? el('div', { class: 'kpi-prev', title: `Compared with ${k.label}` }, el('span', { class: 'kpi-prev-l' }, k.label), dbFmt(k.prev, w.format || 'compact', cur()))
+      const arrow = k.change == null ? '' : k.change > 0.0005 ? '▲' : k.change < -0.0005 ? '▼' : '■';
+      const badge = k.change != null ? el('span', { class: `kpi-badge ${tone}`, title: `Change vs ${k.label || 'previous period'}` }, `${arrow} ${Math.abs(k.change * 100).toFixed(1)}%`) : null;
+      const cmpTxt = k.label === 'prev' ? 'previous period' : k.label;
+      const sub = el('div', { class: 'kpi-sub', title: k.prev != null ? `Compared with ${cmpTxt}` : '' },
+        k.prev != null ? ['vs ', el('b', {}, fmtK(k.prev)), ` ${cmpTxt}`] : (w.subtitle || `${DB_AGGS[w.agg || 'sum']} of ${typeof dbHuman === 'function' ? dbHuman((w.y || [])[0] || '') : (w.y || [])[0] || ''}`));
+      const prevLine = k.prev != null ? el('div', { class: 'kpi-prev', title: `Compared with ${k.label}` }, el('span', { class: 'kpi-prev-l' }, k.label), fmtK(k.prev))
         : el('div', { class: 'kpi-s' }, w.subtitle || `${DB_AGGS[w.agg || 'sum']} of ${(w.y || [])[0] || ''}`);
-      if (kstyle === 'gradient') {
-        const P = pal();
+      card.style.background = '';
+      if (kstyle === 'icon') {
         const idx = Math.max(0, pageWidgets().filter((x) => x.type === 'kpi').indexOf(S.wf[w.id] || w));
-        const c1 = P[idx % P.length], c2 = P[(idx + 1) % P.length];
-        card.classList.add('kpi-gradient');
-        card.style.background = `linear-gradient(135deg, ${c1} 0%, ${c2} 130%)`;
-        const sp = k.spark.length > 1 ? sparkLine(k.spark, 'rgba(255,255,255,.9)') : null;
-        body.append(el('div', { class: 'kpi-g' }, el('div', { class: 'kpi-v', title: full }, valueTxt), el('div', { class: 'kpi-g-foot' }, prevLine, badge), sp));
+        const [c1, c2] = DB_ICON_HUES[idx % DB_ICON_HUES.length];
+        card.classList.add('kpi-icon');
+        const pctTxt = k.change == null ? '' : `${arrow} ${Math.abs(k.change * 100).toFixed(Math.abs(k.change) < 0.1 ? 1 : 0)}%`;
+        body.append(
+          el('span', { class: 'kpi-ico', style: `background:linear-gradient(145deg,${c1},${c2});box-shadow:0 10px 22px -10px ${c2}`, html: dbKpiGlyph(w) }),
+          el('div', { class: 'kpi-ic' },
+            el('div', { class: 'kpi-ic-main' },
+              el('div', { class: 'kpi-v', title: full }, valueTxt),
+              k.change != null ? el('div', { class: `kpi-ic-d ${tone}`, title: `Change vs ${cmpTxt}` }, pctTxt) : null,
+              el('div', { class: 'kpi-ic-cap' }, k.prev != null ? `vs ${cmpTxt}` : (w.subtitle || `${w.agg === 'countd' ? 'Unique' : `${DB_AGGS[w.agg || 'sum']} of`} ${(typeof dbHuman === 'function' ? dbHuman((w.y || [])[0] || '') : (w.y || [])[0] || '').toLowerCase()}`))),
+            dbSparkBars(k.spark, c1, c2)));
         return;
       }
-      card.style.background = '';
+      if (kstyle === 'tiles') {
+        const P = pal();
+        const idx = Math.max(0, pageWidgets().filter((x) => x.type === 'kpi').indexOf(S.wf[w.id] || w));
+        const c1 = P[idx % P.length];
+        card.classList.add('kpi-tiles');
+        card.style.background = typeof dbMixHex === 'function' ? `linear-gradient(140deg, ${dbMixHex(c1, '#000000', 0.12)} 0%, ${c1} 52%, ${dbMixHex(c1, '#ffffff', 0.3)} 100%)` : c1;
+        body.append(el('div', { class: 'kpi-c' }, el('div', { class: 'kpi-c-top' }, el('div', { class: 'kpi-v', title: full }, valueTxt), badge), sub,
+          k.spark.length > 1 ? dbSparkArea(k.spark, 'rgba(255,255,255,.95)', '#ffffff') : null));
+        return;
+      }
       if (kstyle === 'gauge') {
         card.classList.add('kpi-gauge');
         const pct = String(w.format || '') === 'percent';
         const target = w.target != null && w.target !== '' && Number.isFinite(Number(w.target)) ? Number(w.target) : null;
         const max = target || (pct ? 1 : Math.max(dbIsNum(k.cur) ? k.cur : 0, dbIsNum(k.prev) ? k.prev : 0) * 1.25) || 1;
         const ratio = dbIsNum(k.cur) ? Math.max(0, Math.min(1, k.cur / max)) : 0;
-        const color = tone === 'bad' ? '#E5484D' : tone === 'good' ? '#22A06B' : 'var(--lagoon)';
+        const color = tone === 'bad' ? '#E5484D' : tone === 'good' ? '#22A06B' : (theme().v.accent || 'var(--lagoon)');
         body.append(el('div', { class: 'kpi-gauge-wrap' }, gaugeSvg(ratio, color),
           el('div', { class: 'kpi-gauge-v', title: full }, valueTxt),
-          el('div', { class: 'kpi-gauge-scale' }, el('span', {}, '0'), el('span', {}, target ? `target ${dbFmt(target, w.format || 'compact', cur())}` : dbFmt(max, w.format || 'compact', cur())))),
+          el('div', { class: 'kpi-gauge-scale' }, el('span', {}, '0'), el('span', {}, target ? `target ${fmtK(target)}` : fmtK(max)))),
         el('div', { class: 'kpi-gauge-foot' }, prevLine, badge));
         return;
       }
@@ -914,34 +1260,30 @@ async function viewDashboard(main, r) {
         const R = 34, C = 2 * Math.PI * R;
         const ring = el('div', { class: 'kpi-ring-svg', html: `<svg viewBox="0 0 84 84" aria-hidden="true"><circle cx="42" cy="42" r="${R}" fill="none" stroke="var(--gauge-bg,#E6EAF2)" stroke-width="9"/><circle cx="42" cy="42" r="${R}" fill="none" stroke="${color}" stroke-width="9" stroke-linecap="round" stroke-dasharray="${(C * ratio).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 42 42)"/></svg><span>${Math.round(ratio * 100)}%</span>` });
         body.append(el('div', { class: 'kpi-wrap' }, ring, el('div', { class: 'kpi-main' }, el('div', { class: 'kpi-v', title: full }, valueTxt), prevLine,
-          el('div', { class: 'kpi-ring-of muted small' }, target ? `of target ${dbFmt(target, w.format || 'compact', cur())}` : k.prev != null ? `of ${k.label || 'previous'}` : ''), badge)));
+          el('div', { class: 'kpi-ring-of muted small' }, target ? `of target ${fmtK(target)}` : k.prev != null ? `of ${k.label || 'previous'}` : ''), badge)));
         return;
       }
       if (kstyle === 'minimal') {
         card.classList.add('kpi-minimal');
-        body.append(el('div', { class: 'kpi-min' }, el('div', { class: 'kpi-v', title: full }, valueTxt), el('div', { class: 'kpi-min-foot' }, badge, prevLine)));
+        body.append(el('div', { class: 'kpi-min' }, el('div', { class: 'kpi-v', title: full }, valueTxt), el('div', { class: 'kpi-min-foot' }, badge, sub)));
         return;
       }
-      if (kstyle === 'accent') {
-        card.classList.add('kpi-accent');
-        body.append(el('div', { class: 'kpi-wrap' }, el('div', { class: 'kpi-main' }, el('div', { class: 'kpi-v', title: full }, valueTxt), prevLine), el('div', { class: 'kpi-side' }, badge,
-          k.spark.length > 1 ? sparkLine(k.spark, theme().v.accent || '#0A5CFF', true) : null)));
-        return;
-      }
-      if (kstyle === 'spark') {
-        card.classList.add('kpi-spark-line');
-        body.append(el('div', { class: 'kpi-wrap' }, el('div', { class: 'kpi-main' }, el('div', { class: 'kpi-v', title: full }, valueTxt), prevLine),
-          el('div', { class: 'kpi-side' }, badge, k.spark.length > 1 ? sparkLine(k.spark, tone === 'bad' ? '#E5484D' : tone === 'good' ? '#22A06B' : '#0A5CFF', true) : null)));
-        return;
-      }
-      const left = el('div', { class: 'kpi-main' }, el('div', { class: 'kpi-v', title: full }, valueTxt), prevLine);
-      const right = el('div', { class: 'kpi-side' }, badge,
-        k.spark.length > 1 ? el('div', { class: 'kpi-spark', 'aria-hidden': 'true' }, k.spark.map((v) => el('i', { style: `height:${Math.max(6, (v / Math.max(...k.spark, 1)) * 100)}%` }))) : null);
-      body.append(el('div', { class: 'kpi-wrap' }, left, right));
+      card.classList.add('kpi-clean');
+      const accent = theme().v.accent || pal()[0];
+      body.append(el('div', { class: 'kpi-c' }, el('div', { class: 'kpi-c-top' }, el('div', { class: 'kpi-v', title: full }, valueTxt), badge), sub,
+        k.spark.length > 1 ? dbSparkArea(k.spark, accent) : null));
       return;
     }
     if (w.type === 'table') {
-      const show = (w.columns && w.columns.length ? w.columns : cols).filter((c) => cols.includes(c));
+      const grouped = !!(w.groupBy && cols.includes(w.groupBy) && (w.y || []).some((c) => cols.includes(c)));
+      if (grouped) {                                      // a summary table: one row per value, measures added up (follows the period and filters)
+        const ys = (w.y || []).filter((c) => cols.includes(c));
+        const a = dbAggregate(cols, rows, { x: w.groupBy, y: ys, agg: w.agg || 'sum' });
+        cols = [w.groupBy, ...ys];
+        rows = a.labels.map((l, i) => [l, ...a.series.map((sr) => sr.data[i])]).sort((p, q) => (dbIsNum(q[1]) ? q[1] : -Infinity) - (dbIsNum(p[1]) ? p[1] : -Infinity));
+      }
+      const fmtOf = (c) => (w.formats || {})[c] || w.format || 'compact';
+      const show = (!grouped && w.columns && w.columns.length ? w.columns : cols).filter((c) => cols.includes(c));
       const idx = show.map((c) => cols.indexOf(c));
       const numIdx = idx.filter((i) => rows.slice(0, 200).some((r) => dbIsNum(r[i])) && !/(^|_)(id|key|code|year)$/i.test(cols[i]));
       const heat = w.heat !== false, totals = w.totals !== false;
@@ -955,11 +1297,12 @@ async function viewDashboard(main, r) {
         let rs = rows.slice();
         if (sortI != null) rs.sort((a, b) => { const x = a[idx[sortI]], y2 = b[idx[sortI]]; return (x > y2 ? 1 : x < y2 ? -1 : 0) * dir; });
         tb.replaceChildren(...rs.slice(0, 500).map((r) => el('tr', {}, idx.map((i) => el('td', { class: dbIsNum(r[i]) ? 'num' : '', style: tint(i, r[i]) },
-          dbIsNum(r[i]) ? (numIdx.includes(i) ? dbFmt(r[i], w.format || 'compact', cur()) : String(r[i])) : r[i] == null ? '' : String(r[i]))))));
+          dbIsNum(r[i]) ? (numIdx.includes(i) ? dbFmt(r[i], fmtOf(cols[i]), cur()) : String(r[i])) : r[i] == null ? '' : String(r[i]))))));
       };
-      const thead = el('thead', {}, el('tr', {}, show.map((c, k2) => el('th', { class: numIdx.includes(idx[k2]) ? 'num' : '', onClick: () => { if (sortI === k2) dir = -dir; else { sortI = k2; dir = 1; } paint(); } }, c.replace(/_/g, ' ')))));
+      const thead = el('thead', {}, el('tr', {}, show.map((c, k2) => el('th', { class: numIdx.includes(idx[k2]) ? 'num' : '', onClick: () => { if (sortI === k2) dir = -dir; else { sortI = k2; dir = 1; } paint(); } },
+        typeof dbHuman === 'function' ? dbHuman(c) : c.replace(/_/g, ' ')))));
       const tfoot = totals && numIdx.length ? el('tfoot', {}, el('tr', {}, idx.map((i, k2) => el('td', { class: numIdx.includes(i) ? 'num' : '' },
-        k2 === 0 && !numIdx.includes(i) ? 'Total' : numIdx.includes(i) ? dbFmt(rows.reduce((s2, r) => s2 + (dbIsNum(r[i]) ? r[i] : 0), 0), w.format || 'compact', cur()) : '')))) : null;
+        k2 === 0 && !numIdx.includes(i) ? 'Total' : numIdx.includes(i) && !(grouped && ['avg', 'min', 'max'].includes(w.agg)) ? dbFmt(rows.reduce((s2, r) => s2 + (dbIsNum(r[i]) ? r[i] : 0), 0), fmtOf(cols[i]), cur()) : '')))) : null;
       paint();
       body.append(el('div', { class: `dash-table${heat ? ' heat' : ''}` }, el('table', { class: 't grid' }, thead, tb, tfoot)),
         el('div', { class: 'muted dash-foot' }, `${rows.length.toLocaleString('en-IN')} row${rows.length === 1 ? '' : 's'}${rows.length > 500 ? ' · first 500 shown' : ''}`));
@@ -1023,7 +1366,7 @@ async function viewDashboard(main, r) {
       const ch = drawChild(w, c, i, cellBody);
       if (ch) charts.push(ch);
     });
-    if (w.syncHover !== false && charts.length > 1) syncHover(charts);
+    if (w.syncHover !== false && charts.length > 1 && charts.every((c) => c && c.canvas && c.getElementsAtEventForMode)) syncHover(charts);
   }
   /* one chart at a time; hover (or click) a tab to switch */
   function renderPanelTabs(w, body) {
@@ -1131,7 +1474,8 @@ async function viewDashboard(main, r) {
     const base = seriesFor(w, w.dataset, rows, cols);
     const labels = base.labels.slice();
     const countName = (w.agg === 'count' || w.agg === 'countd') && base.series.length === 1 && !w.series ? (w.title || 'Count').replace(/\s+(over time|by .*)$/i, '') : null;
-    const sets = base.series.map((s) => ({ name: countName || s.name, map: new Map(base.labels.map((l, i) => [l, s.data[i]])), src: 'base' }));
+    const nice = (n) => (!w.series && typeof dbHuman === 'function' && /^[a-z0-9_]+$/.test(String(n)) ? dbHuman(n) : n);   // net_sales -> Net sales (column names only)
+    const sets = base.series.map((s) => ({ name: countName || nice(s.name), map: new Map(base.labels.map((l, i) => [l, s.data[i]])), src: 'base' }));
     for (const L of w.layers || []) {
       const res = S.results[L.dataset];
       if (!res) continue;
@@ -1143,7 +1487,66 @@ async function viewDashboard(main, r) {
     if (base.isTime) labels.sort();
     return { base, labels, sets };
   }
+  /* one frame per time step for "play over time" on bars, donut and funnel */
+  function playFrames(w, cols, rows) {
+    const b = dbBucketRows(cols, rows, w.play, w.playGrain || 'month');
+    if (!b.grain) return null;
+    const ti = cols.indexOf(w.play);
+    const keys = [...new Set(b.rows.map((r) => r[ti]).filter((v) => v != null).map(String))].sort();
+    if (keys.length < 2) return null;
+    const spec = { ...w, series: null, layers: null, sort: 'label', top: 0 };
+    const cats = dbAggregate(cols, rows, spec).labels;
+    const cum = w.playCum !== false;
+    const frames = keys.slice(-120).map((k) => {
+      const sub = b.rows.filter((r) => { const v = r[ti]; return v != null && (cum ? String(v) <= k : String(v) === k); });
+      const a = dbAggregate(cols, sub, spec);
+      const m = new Map(a.labels.map((l, i) => [l, a.series[0] ? a.series[0].data[i] : null]));
+      return { label: k, data: cats.map((c) => (dbIsNum(m.get(c)) ? m.get(c) : 0)) };
+    });
+    return { cats, frames };
+  }
+  /* labels + aligned series + forecast/trend/anomalies, ready for the chart engine */
+  function chartPrep(w, cols, rows) {
+    const { base, labels, sets } = chartData(w, rows, cols);
+    if (!sets.length) return { empty: 'novalue' };
+    if (!labels.length) return { empty: 'norows' };
+    const hbar = w.type === 'hbar', share = w.type === 'pie' || w.type === 'funnel';
+    const maxOf = (s) => Math.max(0, ...[...s.map.values()].filter(dbIsNum).map(Math.abs));
+    const baseMax = Math.max(1, ...sets.filter((s) => s.src === 'base').map(maxOf));
+    sets.forEach((s) => { s.axisId = s.src !== 'layer' ? 'y' : s.axis === 'right' ? 'y1' : s.axis === 'left' ? 'y' : (maxOf(s) > baseMax * 6 || maxOf(s) * 6 < baseMax ? 'y1' : 'y'); });
+    const ml = w.ml || {};
+    const mlOK = base.isTime && !share && !hbar && !w._compact;
+    const y0 = labels.map((l) => { const v = sets[0].map.get(l); return dbIsNum(v) ? v : null; });
+    const fc = mlOK && ml.forecast > 0 ? dbForecast(y0.map((v) => v ?? 0), Number(ml.forecast), dbSeasonFor(base.grain, y0.length)) : null;
+    const fut = fc ? dbNextLabels(labels[labels.length - 1], base.grain, Number(ml.forecast)) : [];
+    const all = labels.concat(fut);
+    const pad = (a) => a.concat(fut.map(() => null));
+    const extras = {};
+    if (fc) extras.fc = fc;
+    if (mlOK && ml.trend) { const lr = dbLinReg(y0.map((v) => v ?? 0)); extras.trend = all.map((_, i) => lr.intercept + lr.slope * i); }
+    if (mlOK && Number(ml.movingAvg) > 1) extras.ma = { n: Number(ml.movingAvg), data: pad(dbMovingAvg(y0.map((v) => v ?? 0), Number(ml.movingAvg))) };
+    if (mlOK && ml.anomalies) { const an = dbAnomalies(y0.map((v) => v ?? 0), 3.5, dbSeasonFor(base.grain, y0.length)); if (an.length) extras.anom = an.map((a) => a.i); }
+    const prep = { labels: all, actual: labels.length, isTime: base.isTime, grain: base.grain, extras: Object.keys(extras).length ? extras : null, frames: null,
+      sets: sets.map((s) => ({ name: s.name, data: pad(labels.map((l) => (s.map.has(l) ? s.map.get(l) : null))), type: s.type, axis: s.axisId, src: s.src })) };
+    if (w.play && w.play !== w.x && ['bar', 'hbar', 'pie', 'funnel'].includes(w.type) && cols.includes(w.play) && !w.series && !(w.layers || []).length) {
+      const F = playFrames(w, cols, rows);
+      if (F && F.frames.length > 1) {
+        Object.assign(prep, { labels: F.cats, actual: F.cats.length, isTime: false, extras: null, frames: F.frames,
+          sets: [{ name: prep.sets[0].name, data: F.frames[F.frames.length - 1].data, axis: 'y', src: 'base' }] });
+      }
+    }
+    return prep;
+  }
   function renderChart(w, cols, rows, body) {
+    if (!ecReady()) { renderChartLegacy(w, cols, rows, body); return; }
+    const prep = chartPrep(w, cols, rows);
+    if (prep.empty === 'novalue') { body.append(el('p', { class: 'muted dash-msg' }, S.edit ? 'Pick a value column for this chart.' : 'This chart has no value column yet.')); return; }
+    if (prep.empty) { body.append(el('p', { class: 'muted dash-msg' }, 'No rows match the current filters.')); return; }
+    if (is3d(w)) { dbRender3D(ecCtx(w), motionCtx(w), w, cols, rows, prep, body); return; }
+    try { dbEcRender(ecCtx(w), w, prep, body); }
+    catch (e) { console.error(e); body.replaceChildren(); renderChartLegacy(w, cols, rows, body); }
+  }
+  function renderChartLegacy(w, cols, rows, body) {
     const P = pal();
     const CS = dbChartStyle(S.D, theme());
     const barR = CS.bars === 'square' ? 0 : CS.bars === 'pill' ? 999 : (w._compact ? 3 : 6);
@@ -1291,7 +1694,7 @@ async function viewDashboard(main, r) {
   /* data-specific insights for one page: weekday-aware bad/good days, losing streaks, category movers */
   function pageDataInsights(pageId) {
     const out = [];
-    const ws = S.D.widgets.filter((w) => w.page === pageId);
+    const ws = S.D.widgets.filter((w) => !pageId || w.page === pageId);
     const seen = new Set();
     const metricOf = (w) => ({ col: (w.y || [])[0], title: (w.title || '').replace(/\s+(over time|trend|by .*)$/i, '').replace(/^Avg\s+/i, 'Average ') || (w.y || [])[0], w });
     const specs = [];
@@ -1324,7 +1727,28 @@ async function viewDashboard(main, r) {
         const all = new Map([...acc.entries()].map(([d, [sv, n]]) => [d, reduceAll(sv, n)]));
         const days = [...all.keys()].sort();
         const inWin = days.filter((d) => !W.cur || (d >= W.cur.from && d <= W.cur.to));
-        if (inWin.length >= 3) {
+        const gaps = days.slice(1).map((d, k) => dbDays(days[k], d) - 1).sort((a, b) => a - b);
+        const gap = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0;
+        const unit = gap >= 25 ? 'month' : gap >= 5 ? 'week' : null;      // rows per month / per week: no weekday patterns
+        if (unit && inWin.length >= 3) {
+          const med = (a) => { const x = a.slice().sort((p, q) => p - q); return x.length ? x[Math.floor(x.length / 2)] : 0; };
+          const norm = med(days.map((d) => all.get(d)));
+          const lbl = (d) => (unit === 'month' ? new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { month: 'short', year: 'numeric', timeZone: 'UTC' }) : `the week of ${dbShortDate(d)}`);
+          const dev = inWin.map((d) => ({ d, dev: norm ? (all.get(d) - norm) / Math.abs(norm) : 0 }));
+          const worst = dev.reduce((a, b) => (b.dev < a.dev ? b : a)), best = dev.reduce((a, b) => (b.dev > a.dev ? b : a));
+          const bad = lowerBetter ? best : worst, good = lowerBetter ? worst : best;
+          if (norm && Math.abs(bad.dev) >= 0.2) out.push({ tag: `Bad ${unit}`, score: Math.min(1, 0.55 + Math.abs(bad.dev)), good: false,
+            title: `${name} ${lowerBetter ? 'rose' : 'fell'} in ${lbl(bad.d)}`,
+            text: `${name} was ${fmt(all.get(bad.d))} in ${lbl(bad.d)} — ${Math.abs(bad.dev * 100).toFixed(0)}% ${bad.dev < 0 ? 'below' : 'above'} a typical ${unit} (${fmt(norm)}).` });
+          if (norm && Math.abs(good.dev) >= 0.2) out.push({ tag: `Best ${unit}`, score: Math.min(0.9, 0.4 + Math.abs(good.dev) / 2), good: true,
+            title: `${name}: best ${unit} was ${lbl(good.d)}`,
+            text: `${lbl(good.d).replace(/^./, (c) => c.toUpperCase())} reached ${fmt(all.get(good.d))}, ${Math.abs(good.dev * 100).toFixed(0)}% ${good.dev > 0 ? 'above' : 'below'} a typical ${unit}.` });
+          let streak = 1;
+          for (let k = inWin.length - 1; k > 0; k--) { if (all.get(inWin[k]) < all.get(inWin[k - 1])) streak++; else break; }
+          const first = all.get(inWin[inWin.length - streak]), last = all.get(inWin[inWin.length - 1]);
+          if (streak >= 3 && !lowerBetter && first && (first - last) / Math.abs(first) >= 0.05) out.push({ tag: 'Streak', score: 0.6 + streak * 0.05, good: false,
+            title: `${name} has fallen ${streak} ${unit}s in a row`, text: `From ${fmt(first)} in ${lbl(inWin[inWin.length - streak])} to ${fmt(last)} in ${lbl(inWin[inWin.length - 1])}.` });
+        } else if (inWin.length >= 3) {
           const dow = (d) => new Date(`${d}T00:00:00Z`).getUTCDay();
           const DOW = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
           const med = (a) => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : 0; };
@@ -1360,6 +1784,7 @@ async function viewDashboard(main, r) {
         res.columns.forEach((c, i) => { if (kinds[i] === 'cat' && cats.size < 3) cats.add(c); });
         const cur2 = applyWidgetFilters(w, '', res.columns, clientRows(w.dataset, res, '__ins__', 'cur'));
         const prev2 = applyWidgetFilters(w, '', res.columns, clientRows(w.dataset, res, '__ins__', 'prev'));
+        if (!prev2.length) continue;                       // no earlier data: nothing "grew" or "fell"
         const tot = (rows) => { let sv = 0, n = 0; for (const r of rows) if (ok(r)) { sv += valOf(r); n++; } return reduceAll(sv, n); };
         const totalDelta = tot(cur2) - tot(prev2);
         for (const c of [...cats].slice(0, 2)) {
@@ -1370,7 +1795,7 @@ async function viewDashboard(main, r) {
           const moves = [...new Set([...a.keys(), ...b.keys()])].map((k) => ({ k, d: (a.get(k) || 0) - (b.get(k) || 0), base: b.get(k) || 0 }));
           if (!moves.length) continue;
           const down = moves.reduce((x, y) => (y.d < x.d ? y : x)), up = moves.reduce((x, y) => (y.d > x.d ? y : x));
-          const label = c.replace(/_/g, ' ');
+          const label = c.replace(/_(name|id|code|no)$/i, '').replace(/_/g, ' ');    // outlet_name -> outlet
           const pick = (mv, isDown) => {
             if (!mv || mv.d === 0) return;
             const rel = mv.base ? Math.abs(mv.d / mv.base) : 1;
@@ -1402,7 +1827,7 @@ async function viewDashboard(main, r) {
       out.push({ tag: k.label === 'target' ? 'Target' : 'Change', score: Math.min(1, Math.abs(k.change) * 3), good, title: w.title || 'Metric',
         text: `${w.title || 'This metric'} is ${up ? 'up' : 'down'} ${Math.abs(k.change * 100).toFixed(2)}% against ${vs} (${fmt(w, k.prev)} → ${fmt(w, k.cur)}).` });
     }
-    for (const w of expandedWidgets(pageId).filter((x) => ['bar', 'hbar', 'line', 'area', 'pie'].includes(x.type) && x.dataset && S.results[x.dataset])) {
+    for (const w of expandedWidgets(pageId).filter((x) => ['bar', 'hbar', 'line', 'area', 'pie', 'rank', 'catlist'].includes(x.type) && x.dataset && S.results[x.dataset])) {
       const res = S.results[w.dataset];
       const { base, labels, sets } = chartData(w, clientRows(w.dataset, res, w.id), res.columns);
       if (!labels.length) continue;
@@ -1420,21 +1845,14 @@ async function viewDashboard(main, r) {
       .filter((x) => (seenT.has(x.title) ? false : seenT.add(x.title)))
       .filter((x) => { perTag[x.tag] = (perTag[x.tag] || 0) + 1; return perTag[x.tag] <= 3; });
   }
+  /* AI insights as tiles (the Overview look): a few at a time, "More insights" shows the next set */
   function renderInsights(w, card, body) {
     const loadingAny = S.D.widgets.some((x) => x.dataset && !S.results[x.dataset] && !S.errors[x.dataset]);
-    const list = buildInsights(w.page);
+    const list = buildInsights(w.scope === 'all' ? null : w.page);
     const head = card.querySelector('.dash-w-head h3');
     if (head && list.length) head.append(el('span', { class: 'ins-count' }, String(list.length)));
-    const expanded = !!w._all;
-    const shown = expanded ? list : list.slice(0, 6);
-    const items = shown.map((it) => el('div', { class: `ins-item ${it.good ? 'good' : 'bad'}${it.anomaly ? ' anomaly' : ''}` },
-      el('div', { class: 'ins-title' }, el('span', { class: `ins-tag t-${(it.tag || 'Change').toLowerCase()}` }, it.tag || 'Change'), it.title), el('p', {}, it.text)));
-    body.classList.add('ins-body');
-    body.append(...(items.length ? items : [el('p', { class: 'muted dash-msg' }, loadingAny ? 'Reading your numbers…'
-      : 'No notable patterns in the current data. Try a longer period, or add charts over time.')]),
-    el('div', { class: 'ins-actions' },
-      list.length > 6 ? btn(expanded ? 'Show fewer' : `View all ${list.length}`, () => { w._all = !expanded; drawGrid(); }, { cls: 'sm ghost' }) : null,
-      btn('Ask Dora for a summary', () => doraExplain('dashboard', null, list), { cls: 'sm' })));
+    dbOvInsights(ovCtx(w), w, list, body, { loading: loadingAny, onAsk: () => doraExplain('dashboard', null, list),
+      onPage: (n) => { w._page = n; const c = grid.querySelector(`.dash-w[data-id="${w.id}"]`); if (c) c.replaceWith(widgetEl(w)); else drawGrid(); } });
   }
   function widgetSummary(w) {
     const res = S.results[w.dataset];
@@ -1468,6 +1886,7 @@ async function viewDashboard(main, r) {
       top_share: total ? sorted[0][1] / total : null, total_fmt: f(total), count: sorted.length };
   }
   function widgetImage(w) {
+    if (w.type === 'globe') return null;                  // a live 3D scene, not a chart image
     const c = grid.querySelector(`.dash-w[data-id="${w.id}"] canvas`);
     if (!c || !c.width) return null;
     try {   // paint on the card colour so dark/transparent charts stay readable
@@ -1805,6 +2224,50 @@ async function viewDashboard(main, r) {
     grid.querySelectorAll('.dash-w').forEach((c) => c.classList.toggle('sel', c.dataset.id === id));
     openSide('widget');
   }
+  /* fill the fields a chart type needs from the dataset's columns (used when adding a chart or switching its type) */
+  function typeDefaults(w, res) {
+    if (!res) return;
+    const cols = res.columns, kinds = dbColumnKinds(cols, res.rows);
+    const of = (k) => cols.filter((_, i) => kinds[i] === k);
+    const nums = of('num'), cats = of('cat'), dates = of('date');
+    const vals = nums.filter((c) => !/^(lat|latitude|lon|lng|long|longitude)$/i.test(c));      // coordinates are not a value to add up
+    const y = (w.y || []).find((c) => vals.includes(c)) || vals.find((c) => /sales|revenue|amount|value|total|gmv|profit|spend|cost/i.test(c)) || vals[0] || nums[0];
+    const geo = cols.find((c) => /country|nation|state|province|region|city|town|district|location|place/i.test(c) && kinds[cols.indexOf(c)] !== 'num');
+    const t = w.type;
+    if (['bar', 'hbar', 'pie', 'funnel', 'sankey', 'heatmap', 'twin3d'].includes(t) && (!w.x || !cats.concat(t === 'bar' ? dates : []).includes(w.x))) w.x = cats[0] || dates[0] || w.x;
+    if (['line', 'area'].includes(t) && (!w.x || !dates.includes(w.x)) && dates.length) w.x = dates[0];
+    if (t === 'hbar' && !w.sort) { w.sort = 'value_desc'; w.top = w.top || 10; }
+    if (t === 'pie' && !w.top) w.top = 6;
+    if (t === 'scatter') {
+      if (!nums.includes(w.x)) w.x = nums.find((c) => c !== y) || null;
+      if (!w.label) w.label = cats[0] || null;
+      if (!w.size) w.size = nums.find((c) => c !== y && c !== w.x) || null;
+    }
+    if (t === 'heatmap' && (!w.series || w.series === w.x)) w.series = cats.concat(of('text')).find((c) => c !== w.x) || null;
+    if (t === 'sankey' && (!w.target || w.target === w.x)) w.target = cats.find((c) => c !== w.x) || null;
+    if (t === 'map') { if (geo) w.x = geo; w.view = w.view || 'flat'; }
+    if (t === 'twin3d') w.twin = w.twin || 'campus';
+    if (t === 'rank' || t === 'catlist') {
+      const names = cats.concat(of('text'));
+      if (!w.x || !names.includes(w.x)) {
+        const site = names.find((c) => /outlet|store|site|branch|shop|restaurant|hotel|clinic|school|location|product|item|customer|agent|name/i.test(c));
+        const cat = names.find((c) => /categor|department|family|class|type|segment|brand|group|channel|genre/i.test(c));
+        w.x = (t === 'rank' ? site || names[0] : cat || names[0]) || w.x;
+      }
+      if (!w.top) w.top = t === 'rank' ? 6 : 8;
+    }
+    if (t === 'globe') {
+      const by = (rx) => cols.find((c, i) => rx.test(c) && kinds[i] !== 'num');
+      const geoCol = { city: by(/(^|_)(city|town|district)(_name)?$/i), state: by(/(^|_)(state|province)(_name|_code)?$/i), country: by(/(^|_)(country|nation)(_name|_code)?$/i),
+        lat: cols.find((c) => /^(lat|latitude)$/i.test(c)), lon: cols.find((c) => /^(lon|lng|long|longitude)$/i.test(c)) };
+      const site = by(/(^|_)(outlet|store|site|branch|shop|restaurant|cafe|warehouse|plant|factory|hotel|clinic|hospital|school|college|campus|location|facility|office)s?(_?(id|code|no|key|name))?$/i);
+      if (!w.x || !cols.includes(w.x)) w.x = site || geoCol.city || geoCol.state || geoCol.country || cats[0] || null;
+      for (const [k, c] of Object.entries(geoCol)) if (!w[k] && c) w[k] = c;
+      const distinct = (c) => { const i = cols.indexOf(c); return i < 0 ? 0 : new Set(res.rows.map((r) => r[i])).size; };
+      if (!w.zone) w.zone = [geoCol.country, geoCol.state, geoCol.city].find((c) => c && distinct(c) >= 2) || null;
+    }
+    if (y && t !== 'table') w.y = [y];
+  }
   function addWidget(type) {
     const bottom = pageWidgets().reduce((m, w) => Math.max(m, w.layout.y + w.layout.h), 0);
     const ds = S.D.datasets[0];
@@ -1812,9 +2275,11 @@ async function viewDashboard(main, r) {
     const kinds = res ? dbColumnKinds(res.columns, res.rows) : [];
     const num = res ? res.columns.find((_, i) => kinds[i] === 'num') : null;
     const cat = res ? res.columns.find((_, i) => kinds[i] === 'cat' || kinds[i] === 'date') : null;
-    const w = { id: dbUid('w'), page: S.page, type, title: DB_TYPES[type], dataset: type === 'text' || type === 'insights' ? null : ds ? ds.id : null,
+    const w = { id: dbUid('w'), page: S.page, type, title: (DB_CAT_BY_TYPE && DB_CAT_BY_TYPE[type] || {}).name || DB_TYPES[type], dataset: type === 'text' || type === 'insights' ? null : ds ? ds.id : null,
       x: cat || null, y: num ? [num] : [], agg: type === 'kpi' ? 'sum' : 'sum', format: 'compact', text: type === 'text' ? '### Notes\nWrite **markdown** here.' : undefined,
-      layout: { x: 0, y: bottom, w: type === 'kpi' ? 3 : type === 'table' ? 12 : 6, h: type === 'kpi' ? 2 : type === 'text' ? 2 : 4 } };
+      layout: { x: 0, y: bottom, w: type === 'kpi' ? 3 : type === 'table' ? 12 : type === 'globe' ? 8 : ['rank', 'catlist'].includes(type) ? 4 : 6,
+        h: type === 'kpi' ? 2 : type === 'text' ? 2 : ['map', 'twin3d', 'globe'].includes(type) ? 6 : ['scatter', 'rank', 'catlist'].includes(type) ? 5 : 4 } };
+    typeDefaults(w, res);
     if (type === 'panel') {
       Object.assign(w, { panelMode: 'tabs', title: 'Charts', layout: { ...w.layout, w: 6, h: 4 },
         children: [{ type: 'bar', title: 'By category', dataset: w.dataset, x: cat || null, y: num ? [num] : [], agg: 'sum', format: 'compact' },
@@ -1829,10 +2294,12 @@ async function viewDashboard(main, r) {
   function openSide(kind) {
     S.side = kind;
     side.hidden = false;
-    const close = btn('', () => { side.hidden = true; S.side = null; }, { cls: 'ghost icon sm', ic: 'x', title: 'Close panel' });
+    const close = btn('', () => { side.hidden = true; S.side = null; drawBar(); }, { cls: 'ghost icon sm', ic: 'x', title: 'Close panel' });
+    if (kind === 'style' && !S.edit) drawBar();
     if (kind === 'widget') return sideWidget(close);
     if (kind === 'datasets') return sideDatasets(close);
     if (kind === 'filters') return sideFilters(close);
+    if (kind === 'style') return sideStyle(close);
     return sideSettings(close);
   }
   const field = (label, input, hint) => el('label', { class: 'lbl' }, label, input, hint ? el('span', { class: 'pl-hint' }, hint) : null);
@@ -1854,7 +2321,16 @@ async function viewDashboard(main, r) {
       S.D.widgets = S.D.widgets.filter((x) => x !== w); S.selected = null; S.dirty = true; side.hidden = true; drawGrid();
     }, { cls: 'ghost icon sm', ic: 'trash', title: 'Delete widget' }), close),
     field('Title', title),
-    field('Type', selectOf(Object.entries(DB_TYPES), w.type, (v) => { w.type = v; changed(); openSide('widget'); }))];
+    el('div', { class: 'lbl' }, 'Chart', typeof dbChartPicker === 'function'
+      ? dbChartPicker(w.type, (t) => { if (t === w.type) return; const old = w.type; w.type = t; typeDefaults(w, res); if ((w.title || '') === ((DB_CAT_BY_TYPE[old] || {}).name || DB_TYPES[old])) w.title = (DB_CAT_BY_TYPE[t] || {}).name || w.title; changed(); openSide('widget'); }, { compact: true })
+      : selectOf(Object.entries(DB_TYPES), w.type, (v) => { w.type = v; changed(); openSide('widget'); }))];
+    const seg = (opts, cur, onPick) => el('div', { class: 'dseg', role: 'group' }, opts.map(([v, t]) => el('button', { type: 'button', class: v === cur ? 'on' : '', 'aria-pressed': String(v === cur), onClick: () => onPick(v) }, t)));
+    if (typeof DB_3D_TYPES === 'object' && DB_3D_TYPES.has(w.type)) {
+      const on = (w.dim || S.D.dim || '2d') === '3d';
+      parts.push(el('div', { class: 'lbl' }, 'View', seg([['2d', '2D'], ['3d', '3D']], on ? '3d' : '2d', (v) => setDim(w, v)),
+        on ? el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: w.autoRotate !== false, onChange: (e) => { w.autoRotate = e.target.checked; changed(); } }), 'Slowly orbit (stops while you drag)') : null));
+    }
+    if (w.type === 'map') parts.push(el('div', { class: 'lbl' }, 'View', seg([['flat', 'Flat'], ['3d', '3D'], ['globe', 'Globe']], dbMapView(w, S.D), (v) => setView(w, v))));
     if (w.type === 'panel') {
       w.children = w.children || [];
       parts.push(field('Show sub-charts as', selectOf([['tabs', 'Tabs — one chart at a time (hover a tab to switch)'], ['grid', 'Grid — all charts side by side']], w.panelMode || 'grid', (v) => { w.panelMode = v; changed(); openSide('widget'); })));
@@ -1918,9 +2394,56 @@ async function viewDashboard(main, r) {
         parts.push(field('Number format', selectOf([['number', '1,23,456.78'], ['integer', '1,23,457'], ['currency', `${cur()}1,23,457`], ['compact', '1.23 L'], ['percent', '12.3%']], w.format || 'number', (v) => { w.format = v; changed(); })));
         parts.push(el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: w.heat !== false, onChange: (e) => { w.heat = e.target.checked; changed(); } }), 'Colour scale on numbers (heat table)'),
           el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: w.totals !== false, onChange: (e) => { w.totals = e.target.checked; changed(); } }), 'Totals row'));
+      } else if (['rank', 'catlist', 'globe'].includes(w.type)) {        // the Overview widgets: only what matters
+        const catCols = cols.filter((_, i) => ['cat', 'text', 'id', 'date'].includes(kinds[i]));
+        const numCols = cols.filter((_, i) => kinds[i] === 'num' || kinds[i] === 'id');
+        const pick = (label, key, list, none, hint) => field(label, selectOf((list.length ? list : cols).map((c) => [c, c]), key === 'y' ? (w.y || [])[0] : w[key],
+          (v) => { if (key === 'y') w.y = v ? [v] : []; else w[key] = v || null; changed(); openSide('widget'); }, none), hint);
+        const aggFmt = el('div', { class: 'grid2' },
+          field('Aggregate', selectOf(Object.entries(DB_AGGS), w.agg || 'sum', (v) => { w.agg = v; changed(); })),
+          field('Number format', selectOf([['compact', '1.23 L'], ['currency_compact', `${cur()}1.23 L`], ['number', '1,23,456.78'], ['integer', '1,23,457'], ['currency', `${cur()}1,23,457`], ['percent', '12.3%']], w.format || 'compact', (v) => { w.format = v; changed(); })));
+        if (w.type === 'globe') {
+          parts.push(pick('Locations', 'x', catCols, null, 'One marker and building per value, e.g. the store or outlet.'),
+            pick('Regions (the list on the left)', 'zone', catCols, '— none —', 'With a dashboard filter on this column, clicking a region filters the whole dashboard.'),
+            pick('Value', 'y', numCols), aggFmt,
+            el('details', { class: 'pl-more' }, el('summary', {}, 'Where the locations are'),
+              pick('City', 'city', catCols, '— none —'),
+              el('div', { class: 'grid2' }, pick('State', 'state', catCols, '— none —'), pick('Country', 'country', catCols, '— none —')),
+              el('div', { class: 'grid2' }, pick('Latitude', 'lat', numCols, '— none —'), pick('Longitude', 'lon', numCols, '— none —')),
+              field('Buildings', selectOf(Object.entries(DB_OV_KINDS), dbOvKind(w), (v) => { w.kind = v; changed(); })),
+              el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: w.autoRotate !== false, onChange: (e) => { w.autoRotate = e.target.checked; changed(); } }), 'Rotate the globe slowly')));
+        } else {
+          const topIn = el('input', { class: 'field', type: 'number', min: 1, max: 50, value: w.top || (w.type === 'rank' ? 6 : 8) });
+          topIn.addEventListener('change', () => { w.top = Math.max(1, Math.min(50, Number(topIn.value) || 6)); changed(); });
+          parts.push(pick(w.type === 'rank' ? 'What to rank' : 'Categories', 'x', catCols), pick('Value', 'y', numCols), aggFmt,
+            el('div', { class: 'grid2' }, field('Show top', topIn),
+              w.type === 'rank' ? el('label', { class: 'switch', style: { alignSelf: 'end', marginBottom: '8px' } }, el('input', { type: 'checkbox', checked: !!w.lowerBetter, onChange: (e) => { w.lowerBetter = e.target.checked; changed(); } }), 'Lower is better') : el('span')));
+        }
+        if (S.D.filters.some((f) => f.link)) parts.push(el('p', { class: 'pl-hint' }, 'Clicking a row filters the dashboard when a dashboard filter uses the same column (Filters › “Set by clicking a chart”).'));
+      } else if (['scatter', 'heatmap', 'sankey', 'map'].includes(w.type)) {
+        const opts = (k) => cols.filter((_, i) => k.includes(kinds[i])).map((c) => [c, c]);
+        const nums = opts(['num', 'id']), catsO = opts(['cat', 'text', 'date']);
+        const pick1 = (label, key, list, none, hint) => field(label, selectOf(list.length ? list : cols.map((c) => [c, c]), key === 'y' ? (w.y || [])[0] : w[key], (v) => { if (key === 'y') w.y = v ? [v] : []; else w[key] = v || null; changed(); openSide('widget'); }, none), hint);
+        const aggFmt = el('div', { class: 'grid2' },
+          field('Aggregate', selectOf(Object.entries(DB_AGGS), w.agg || 'sum', (v) => { w.agg = v; changed(); })),
+          field('Number format', selectOf([['compact', '1.23 L'], ['currency_compact', `${cur()}1.23 L`], ['number', '1,23,456.78'], ['integer', '1,23,457'], ['currency', `${cur()}1,23,457`], ['percent', '12.3%']], w.format || 'compact', (v) => { w.format = v; changed(); })));
+        if (w.type === 'scatter') {
+          const on3d = (w.dim || S.D.dim || '2d') === '3d';
+          parts.push(pick1('X axis (a number)', 'x', nums), pick1('Y axis (a number)', 'y', nums),
+            on3d ? pick1('Depth — Z (a number)', 'z', nums, '— choose —') : null,
+            pick1('Bubble size', 'size', nums, '— all the same —'), pick1('Colour by', 'color', cols.map((c) => [c, c]), '— one colour —'),
+            pick1('One bubble per', 'label', catsO, '— every row —', 'With this set, numbers are added up (or averaged) per bubble.'), aggFmt);
+        } else if (w.type === 'heatmap') {
+          parts.push(pick1('Columns (X axis)', 'x', catsO), pick1('Rows', 'series', catsO), pick1('Value', 'y', nums), aggFmt);
+        } else if (w.type === 'sankey') {
+          parts.push(pick1('From (X axis)', 'x', catsO), pick1('To', 'target', catsO), pick1('Value', 'y', nums), aggFmt);
+        } else {
+          parts.push(pick1('Location (X axis)', 'x', cols.map((c) => [c, c]), '— none —', 'An area (country / state), a city, or pick latitude + longitude below.'), pick1('Value (size / colour)', 'y', nums), aggFmt);
+          if (typeof dbGeoFields === 'function') parts.push(...dbGeoFields(w, cols, kinds, changed, field, selectOf));
+        }
       } else {
         const numCols = cols.filter((_, i) => kinds[i] === 'num' || kinds[i] === 'id');
-        if (w.type !== 'kpi') parts.push(field(w.type === 'pie' ? 'Slices (category)' : 'X axis (group by)', selectOf(cols.map((c) => [c, c]), w.x, (v) => { w.x = v || null; changed(); }, '— none —')));
+        if (w.type !== 'kpi') parts.push(field(w.type === 'pie' ? 'Slices (category)' : w.type === 'funnel' ? 'Stages' : w.type === 'twin3d' ? (w.twin === 'building' ? 'Floor' : 'Building / site') : 'X axis (group by)', selectOf(cols.map((c) => [c, c]), w.x, (v) => { w.x = v || null; changed(); }, '— none —')));
         parts.push(el('div', { class: 'lbl' }, w.type === 'kpi' || w.type === 'pie' ? 'Value' : 'Values',
           el('div', { class: 'dash-checks' }, (numCols.length ? numCols : cols).map((c) => el('label', { class: 'switch' },
             el('input', { type: w.type === 'kpi' || w.type === 'pie' || w.series ? 'radio' : 'checkbox', name: `y-${w.id}`, checked: (w.y || []).includes(c), onChange: (e) => {
@@ -1942,21 +2465,38 @@ async function viewDashboard(main, r) {
             field('Compare with', selectOf([['period', 'Previous period'], ['year', 'Same period last year'], ['target', 'A target'], ['none', 'Nothing']], w.compare || 'period', (v) => { w.compare = v; changed(); openSide('widget'); })),
             (w.compare === 'target') ? field('Target value', tgt) : el('span')));
         } else {
-          if (w.type !== 'pie') parts.push(field('Split into series by', selectOf(cols.filter((_, i) => kinds[i] === 'cat').map((c) => [c, c]), w.series, (v) => { w.series = v || null; if (w.series) w.y = (w.y || []).slice(0, 1); changed(); openSide('widget'); }, '— none —')));
-          parts.push(el('div', { class: 'grid2' },
+          if (typeof DB_MOTION_TYPES === 'object' && DB_MOTION_TYPES[w.type]) parts.push(...dbMotionFields(w, cols, kinds, changed, field, selectOf));
+          if (['bar', 'hbar', 'line', 'area'].includes(w.type)) parts.push(field(w.type === 'bar' && (w.dim || S.D.dim) === '3d' ? 'Depth — split into series by' : 'Split into series by', selectOf(cols.filter((_, i) => kinds[i] === 'cat').map((c) => [c, c]), w.series, (v) => { w.series = v || null; if (w.series) w.y = (w.y || []).slice(0, 1); changed(); openSide('widget'); }, '— none —')));
+          if (w.type === 'pie') parts.push(field('Style', selectOf([['donut', 'Donut'], ['pie', 'Pie'], ['rose', 'Rose (petals)'], ['rings', 'Radial rings']], w.pieStyle || 'donut', (v) => { w.pieStyle = v; changed(); })));
+          const geoW = typeof DB_GEO_TYPES === 'object' && DB_GEO_TYPES[w.type];
+          if (!geoW) parts.push(el('div', { class: 'grid2' },
             field('Sort', selectOf([['label', 'By label'], ['value_desc', 'Largest first'], ['value_asc', 'Smallest first']], w.sort || 'label', (v) => { w.sort = v; changed(); })),
             field('Show top', (() => { const i = el('input', { class: 'field', type: 'number', min: 0, value: w.top || '' , placeholder: 'all' }); i.addEventListener('change', () => { w.top = Number(i.value) || 0; changed(); }); return i; })())));
           if (['bar', 'hbar', 'area'].includes(w.type)) parts.push(el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: !!w.stacked, onChange: (e) => { w.stacked = e.target.checked; changed(); } }), 'Stack series'));
-          if (['bar', 'hbar'].includes(w.type)) parts.push(field('Colours', selectOf([['category', 'A different colour for each bar'], ['single', 'One colour']], w.colorBy || 'category', (v) => { w.colorBy = v; changed(); })));
+          if (['bar', 'hbar'].includes(w.type)) parts.push(field('Colours', selectOf([['single', 'One colour (cleanest)'], ['category', 'A different colour for each bar']], w.colorBy === 'category' ? 'category' : 'single', (v) => { w.colorBy = v; changed(); })));
+          const dateCols = cols.filter((_, i) => kinds[i] === 'date');
+          if (['bar', 'hbar', 'pie', 'funnel'].includes(w.type)) {
+            parts.push(el('div', { class: 'pl-sec' }, 'Motion'),
+              field('Play over time', selectOf(dateCols.map((c) => [c, c]), w.play, (v) => { w.play = v || null; delete S.play[w.id]; changed(); openSide('widget'); }, '— off —'),
+                dateCols.length ? 'Adds a play button: one step per period, bars re-rank as they move.' : 'Needs a date column in the dataset.'),
+              w.play ? el('div', { class: 'grid2' },
+                field('Step', selectOf([['day', 'Day'], ['week', 'Week'], ['month', 'Month'], ['quarter', 'Quarter'], ['year', 'Year']], w.playGrain || 'month', (v) => { w.playGrain = v; delete S.play[w.id]; changed(); })),
+                field('Speed', selectOf([['1600', 'Slow'], ['1000', 'Normal'], ['550', 'Fast']], String(w.playMs || ''), (v) => { w.playMs = v ? Number(v) : undefined; changed(); }, 'Automatic'))) : null,
+              w.play ? el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: w.playCum !== false, onChange: (e) => { w.playCum = e.target.checked; delete S.play[w.id]; changed(); } }), 'Running total (keeps adding up as it plays)') : null);
+          }
+          if (['line', 'area'].includes(w.type)) {
+            parts.push(el('div', { class: 'pl-sec' }, 'Motion'),
+              el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: !!w.play && w.play === w.x, onChange: (e) => { w.play = e.target.checked ? w.x : null; delete S.play[w.id]; changed(); } }), 'Draw the line over time (play button)'));
+          }
           const facetCols = cols.filter((c, i) => kinds[i] === 'cat' && c !== w.x);
-          if (facetCols.length && !(w.layers || []).length) {
+          if (facetCols.length && !(w.layers || []).length && ['bar', 'hbar', 'line', 'area', 'pie'].includes(w.type) && !w.play) {
             const fsel = selectOf(facetCols.map((c) => [c, c]), facetCols[0], () => {});
             const nIn = el('input', { class: 'field', type: 'number', min: 2, max: 12, value: 4 });
             parts.push(el('div', { class: 'pl-sec' }, 'Small multiples'),
               el('div', { class: 'grid2' }, field('One sub-chart per', fsel), field('How many (top)', nIn)),
               btn('Split into sub-charts', () => smallMultiples(w, fsel.value, Math.max(2, Math.min(12, Number(nIn.value) || 4))), { cls: 'sm' }));
           }
-          if (w.x) parts.push(field('Time grouping (date / timestamp X axis)', selectOf(Object.entries(DB_GRAINS), w.grain || 'auto', (v) => { w.grain = v; changed(); })));
+          if (w.x && ['bar', 'line', 'area'].includes(w.type) && dateCols.includes(w.x)) parts.push(field('Time grouping', selectOf(Object.entries(DB_GRAINS), w.grain || 'auto', (v) => { w.grain = v; changed(); })));
           if ((w.layers || []).length) {
             parts.push(el('div', { class: 'pl-sec' }, 'Combined series'), ...w.layers.map((L) => el('div', { class: 'dash-layer' },
               el('b', {}, L.title || (L.y || [])[0]),
@@ -1975,11 +2515,11 @@ async function viewDashboard(main, r) {
           if (['line', 'area', 'bar'].includes(w.type)) {
             w.ml = w.ml || {};
             const num = (key, ph) => { const i = el('input', { class: 'field', type: 'number', min: 0, max: 365, value: w.ml[key] || '', placeholder: ph }); i.addEventListener('change', () => { w.ml[key] = Number(i.value) || 0; changed(); }); return i; };
-            parts.push(el('div', { class: 'pl-sec' }, 'Analytics (machine learning)'),
+            parts.push(el('details', { class: 'pl-more', open: !!(w.ml.forecast || w.ml.movingAvg || w.ml.trend || w.ml.anomalies) || null }, el('summary', {}, 'Forecast & analytics'),
               el('div', { class: 'grid2' }, field('Forecast ahead (steps)', num('forecast', 'off')), field('Moving average (steps)', num('movingAvg', 'off'))),
               el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: !!w.ml.trend, onChange: (e) => { w.ml.trend = e.target.checked; changed(); } }), 'Trend line (linear regression)'),
               el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: !!w.ml.anomalies, onChange: (e) => { w.ml.anomalies = e.target.checked; changed(); } }), 'Highlight anomalies'),
-              el('p', { class: 'pl-hint' }, 'Works when the X axis is a date or timestamp. The forecast uses Holt-Winters when there is enough history for seasonality (e.g. weekly patterns in daily data), otherwise Holt’s trend method, and shades an 80% range.'));
+              el('p', { class: 'pl-hint' }, 'Works when the X axis is a date or timestamp. The forecast uses Holt-Winters when there is enough history for seasonality (e.g. weekly patterns in daily data), otherwise Holt’s trend method, and shades an 80% range.')));
           }
         }
       }
@@ -1987,7 +2527,7 @@ async function viewDashboard(main, r) {
     if (w.dataset && res && !['text', 'insights', 'panel'].includes(w.type)) {
       w.where = w.where || [];
       const OPS = [['eq', '='], ['neq', '≠'], ['in', 'in (a,b)'], ['gt', '>'], ['gte', '≥'], ['lt', '<'], ['lte', '≤'], ['contains', 'contains']];
-      parts.push(el('div', { class: 'pl-sec' }, 'This chart’s own filters'),
+      parts.push(el('details', { class: 'pl-more', open: (w.where.length || (w.filterControls || []).length) ? true : null }, el('summary', {}, 'This chart’s own filters'),
         ...w.where.map((c, i) => {
           const val = el('input', { class: 'field', value: c.value ?? '', placeholder: 'value' });
           val.addEventListener('change', () => { c.value = val.value; changed(); });
@@ -2001,7 +2541,7 @@ async function viewDashboard(main, r) {
           el('input', { type: 'checkbox', checked: (w.filterControls || []).includes(c), onChange: (e) => {
             const cur2 = (w.filterControls || []).filter((x) => x !== c);
             w.filterControls = e.target.checked ? [...cur2, c].slice(-2) : cur2; changed(); openSide('widget');
-          } }), c)))));
+          } }), c))))));
     }
     parts.push(el('p', { class: 'pl-hint' }, 'Drag the widget to move it; drag its bottom-right corner to resize.'));
     side.replaceChildren(...parts);
@@ -2022,7 +2562,7 @@ async function viewDashboard(main, r) {
       const run = async () => {
         out.replaceChildren(loading('Running…'));
         try {
-          const res = await api(`/api/dashboards/${did}/preview`, { method: 'POST', body: { sql: d.sql, params: params() } });
+          const res = await api(`/api/dashboards/${did}/preview`, { method: 'POST', body: { sql: d.sql, params: params(), maxRows: d.maxRows || undefined } });
           S.results[d.id] = { ...res, cachedAt: Date.now() / 1000 };
           delete S.errors[d.id];
           if (!d.timeColumn || (d.timeColumn !== '__none__' && !res.columns.includes(d.timeColumn))) {
@@ -2088,6 +2628,8 @@ async function viewDashboard(main, r) {
       } else {
         const pi = el('input', { class: 'field mono', value: f.param || '', placeholder: 'optional, e.g. region' }); pi.addEventListener('change', () => { f.param = pi.value.trim(); upd(); });
         items.push(field('SQL param', pi, 'If a dataset’s SQL contains {{param}}, the value goes into the query instead.'));
+        if ((f.type || 'select') === 'select') items.push(el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: !!f.link, onChange: (e) => { f.link = e.target.checked || undefined; upd(); drawGrid(); } }),
+          'Set by clicking a chart — clicking a value of this column (a bar, a donut slice, a row, a region) filters the whole dashboard'));
       }
       return el('div', { class: 'dash-ds' }, items);
     }));
@@ -2101,7 +2643,7 @@ async function viewDashboard(main, r) {
       el('div', { class: 'row' }, el('h2', { class: 'grow' }, 'Dashboard theme'), el('span', { class: 'muted small' }, 'Click to preview live. Background, cards, KPIs, charts and presentation follow the theme.')),
       dbThemeGallery(S.D.look || 'clean', (id) => { S.D.look = id; S.D.custom = {}; S.D.theme = 'auto'; S.dirty = true; applyLook(); drawGrid(); }),
       el('div', { class: 'actions' }, btn('Cancel', () => { S.D.look = before.look; S.D.custom = before.custom; applyLook(); drawGrid(); closeD(null); }),
-        btn('Use this theme', () => { closeD(true); if (side && !side.hidden) openSide('settings'); }, { cls: 'primary' }))), { wide: true });
+        btn('Use this theme', () => { closeD(true); autosave(); if (side && !side.hidden) openSide(S.side || 'style'); }, { cls: 'primary' }))), { wide: true });
   }
   async function saveThemeAs() {
     const v = await formDialog({ title: 'Save as my theme', submit: 'Save', text: 'Saves the current theme with your colours so every dashboard (and presentations) can use it.',
@@ -2111,8 +2653,44 @@ async function viewDashboard(main, r) {
     const baseCustom = DB_THEME_BY_ID[S.D.look] ? {} : ((DB_USER_THEMES.find((u) => u.id === S.D.look) || {}).custom || {});
     try {
       const t = await api('/api/dashboard-themes', { method: 'POST', body: { name: v.name.trim(), base, custom: { ...baseCustom, ...(S.D.custom || {}) } } });
-      await dbLoadUserThemes(); S.D.look = t.id; S.D.custom = {}; S.dirty = true; applyLook(); drawGrid(); openSide('settings'); toast(`Saved theme "${t.name}"`);
+      await dbLoadUserThemes(); S.D.look = t.id; S.D.custom = {}; S.dirty = true; applyLook(); drawGrid(); autosave(); openSide('style'); toast(`Saved theme "${t.name}"`);
     } catch (e) { toast(e.message, 'err'); }
+  }
+  /* Style: everything about how the dashboard looks, in one place, applied live (and saved for editors) */
+  function autosave() { if (!canEdit || S.edit) return; clearTimeout(S.saveT); S.saveT = setTimeout(() => save(true), 600); }
+  function sideStyle(close) {
+    const seg = (opts, cur, onPick) => el('div', { class: 'dseg', role: 'group' }, opts.map(([v, t]) => el('button', { type: 'button', class: v === cur ? 'on' : '', 'aria-pressed': String(v === cur), onClick: () => onPick(v) }, t)));
+    const restyle = (redrawSide = true) => { S.dirty = true; applyLook(); drawGrid(); autosave(); if (redrawSide) openSide('style'); };
+    const curated = (typeof DB_THEME_DEFS === 'object' ? DB_THEME_DEFS : []).filter((t) => t.pick);
+    const curLook = S.D.look || 'clean';
+    const themeGrid = el('div', { class: 'sty-themes' }, curated.map((t) => dbThemeCard(t, curLook === t.id, () => { S.D.look = t.id; S.D.custom = {}; S.D.theme = 'auto'; restyle(); })));
+    const legacy = !curated.some((t) => t.id === curLook);
+    setKids(side, el('div', { class: 'row' }, el('h3', { class: 'grow' }, 'Style'), close),
+      el('p', { class: 'pl-hint', style: { marginTop: '-4px' } }, canEdit ? 'Changes show straight away and are saved for everyone who opens this dashboard.' : 'Changes show straight away.'),
+      el('div', { class: 'sty-sec' }, 'Theme'), themeGrid,
+      legacy ? el('p', { class: 'pl-hint' }, `Current theme: ${DB_USER_THEMES.find((u) => u.id === curLook)?.name || theme().name}.`) : null,
+      btn('More themes', () => openThemes(), { cls: 'sm ghost', ic: 'chart' }),
+      el('div', { class: 'sty-sec' }, 'Motion'),
+      seg([['off', 'Off'], ['subtle', 'Subtle'], ['cinematic', 'Cinematic']], S.D.motion || 'subtle', (v) => { S.D.motion = v; S.kpiLast = {}; S.play = {}; dashEntrance(); restyle(); }),
+      el('p', { class: 'pl-hint' }, { off: 'No animation.', subtle: 'Charts grow in, numbers count up, bars re-sort smoothly when filters change.', cinematic: 'Plus cards rise in, live pulses and slowly orbiting 3D.' }[S.D.motion || 'subtle']),
+      el('div', { class: 'sty-sec' }, 'Charts'),
+      seg([['2d', '2D'], ['3d', '3D']], S.D.dim === '3d' ? '3d' : '2d', (v) => { S.D.dim = v; restyle(); }),
+      el('p', { class: 'pl-hint' }, `3D applies to columns, rankings, lines, donuts, funnels, heatmaps, bubbles and maps (up to ${DB_MAX_3D} per page). Each chart can switch on its own with the 2D / 3D switch in its title bar.`),
+      el('div', { class: 'sty-sec' }, 'KPI cards'),
+      seg([['icon', 'Icons'], ['clean', 'Clean'], ['tiles', 'Tiles'], ['gauge', 'Gauge'], ['minimal', 'Minimal']], DB_KPI_STYLES[S.D.kpiStyle] ? S.D.kpiStyle : 'clean', (v) => { S.D.kpiStyle = v; S.D.widgets.forEach((w) => { if (w.type === 'kpi' && ['clean', 'tiles', 'minimal', 'icon'].includes(w.kpiStyle)) delete w.kpiStyle; }); restyle(); }),
+      el('div', { class: 'sty-sec' }, 'Layout'),
+      el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: !!S.D.fitScreen, onChange: (e) => { S.D.fitScreen = e.target.checked; restyle(false); drawBar(); } }), 'Fit each page on one screen (no scrolling)'),
+      el('details', { class: 'pl-more' }, el('summary', {}, 'Colours, corners and font'),
+        dbThemeCustomizer(S.D, (redraw) => { S.dirty = true; applyLook(); drawGrid(); autosave(); if (redraw) openSide('style'); }, canEdit ? saveThemeAs : null)),
+      el('details', { class: 'pl-more' }, el('summary', {}, 'Chart details'),
+        (() => { const cs = dbChartStyle(S.D, theme()); const set = (k, v) => { S.D.chartStyle = { ...(S.D.chartStyle || {}), [k]: v }; S.dirty = true; drawGrid(); autosave(); };
+          return el('div', { class: 'stack', style: { gap: '8px' } }, el('div', { class: 'grid2' },
+            field('Bars', selectOf([['rounded', 'Rounded'], ['pill', 'Pill'], ['square', 'Square']], cs.bars, (v) => set('bars', v))),
+            field('Lines', selectOf([['smooth', 'Smooth curves'], ['straight', 'Straight']], cs.lines, (v) => set('lines', v))),
+            field('Area fill', selectOf([['gradient', 'Gradient'], ['solid', 'Solid tint'], ['none', 'None']], cs.fill, (v) => set('fill', v))),
+            field('Chart colours', selectOf([['auto', 'Match the theme'], ['vivid', 'Vivid'], ['ocean', 'Ocean'], ['sunset', 'Sunset'], ['forest', 'Forest'], ['neon', 'Neon'], ['aurora', 'Aurora'], ['mono', 'Single blue']], S.D.theme || 'auto', (v) => { S.D.theme = v; S.dirty = true; drawGrid(); autosave(); }))),
+          el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: cs.grid, onChange: (e) => set('grid', e.target.checked) }), 'Grid lines'),
+          el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: cs.points, onChange: (e) => set('points', e.target.checked) }), 'Dots on lines')); })()));
   }
   function sideSettings(close) {
     const name = el('input', { class: 'field', value: S.name }); name.addEventListener('input', () => { S.name = name.value; titleEl.textContent = S.name; S.dirty = true; });
@@ -2121,22 +2699,7 @@ async function viewDashboard(main, r) {
     const allCols = [...new Set(Object.values(S.results).flatMap((x) => x.columns))];
     side.replaceChildren(el('div', { class: 'row' }, el('h3', { class: 'grow' }, 'Dashboard settings'), close),
       field('Name', name), field('Description', desc), field('Currency symbol', curIn),
-      el('div', { class: 'pl-sec' }, 'Theme'),
-      el('div', { class: 'thm-cur' }, el('div', { class: 'thm-cur-prev' }, dbThemeCard(theme(), false, () => openThemes(), DB_USER_THEMES.find((u) => u.id === S.D.look)?.name || theme().name)),
-        btn('Browse 26 themes', () => openThemes(), { cls: 'sm primary', ic: 'chart' })),
-      el('details', { class: 'thm-cust', open: !!(S.D.custom && Object.keys(S.D.custom).length) }, el('summary', {}, 'Customize colours, corners, glass, font'),
-        dbThemeCustomizer(S.D, (redraw) => { S.dirty = true; applyLook(); drawGrid(); if (redraw) openSide('settings'); }, canEdit ? saveThemeAs : null)),
-      field('KPI cards look like', selectOf(Object.entries(DB_KPI_STYLES), S.D.kpiStyle || 'tinted', (v) => { S.D.kpiStyle = v; S.dirty = true; drawGrid(); })),
-      el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: !!S.D.fitScreen, onChange: (e) => { S.D.fitScreen = e.target.checked; S.dirty = true; drawBar(); } }), 'Fit to screen in view mode (one page, no scrolling)'),
-      field('Chart colours', selectOf([['auto', 'Match the theme'], ['vivid', 'Vivid'], ['ocean', 'Ocean'], ['sunset', 'Sunset'], ['forest', 'Forest'], ['neon', 'Neon'], ['aurora', 'Aurora'], ['mono', 'Single blue']], S.D.theme || 'auto', (v) => { S.D.theme = v; S.dirty = true; drawGrid(); })),
-      el('div', { class: 'pl-sec' }, 'Chart style'),
-      (() => { const cs = dbChartStyle(S.D, theme()); const set = (k, v) => { S.D.chartStyle = { ...(S.D.chartStyle || {}), [k]: v }; S.dirty = true; drawGrid(); };
-        return el('div', {}, el('div', { class: 'grid2' },
-          field('Bars', selectOf([['rounded', 'Rounded'], ['pill', 'Pill'], ['square', 'Square']], cs.bars, (v) => set('bars', v))),
-          field('Lines', selectOf([['smooth', 'Smooth curves'], ['straight', 'Straight']], cs.lines, (v) => set('lines', v))),
-          field('Area fill', selectOf([['gradient', 'Gradient'], ['solid', 'Solid tint'], ['none', 'None']], cs.fill, (v) => set('fill', v)))),
-          el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: cs.grid, onChange: (e) => set('grid', e.target.checked) }), 'Grid lines'),
-          el('label', { class: 'switch' }, el('input', { type: 'checkbox', checked: cs.points, onChange: (e) => set('points', e.target.checked) }), 'Data points on lines')); })(),
+      el('p', { class: 'pl-hint' }, 'Theme, motion, 2D / 3D and KPI looks are under ', el('button', { type: 'button', class: 'linkish', onClick: () => openSide('style') }, 'Style'), '.'),
       el('div', { class: 'pl-sec' }, 'Period comparison'),
       el('p', { class: 'pl-hint' }, `Each dataset uses its own date / time column (set in Datasets). ${allCols.length} columns available.`),
       field('Periods end on', selectOf([['data', 'Latest date in the data'], ['today', 'Today']], S.D.period.anchor || 'data', (v) => { S.D.period.anchor = v; S.dirty = true; drawPeriod(); drawGrid(); })),
@@ -2203,7 +2766,7 @@ async function viewDashboard(main, r) {
     }, { wide: true });
   }
 
-  function drawAll() { drawBar(); drawPages(); drawPeriod(); drawFilters(); drawCross(); drawGrid(); if (!S.edit) side.hidden = true; }
+  function drawAll() { if (!S.edit && S.side !== 'style') { side.hidden = true; S.side = null; } drawBar(); drawPages(); drawPeriod(); drawFilters(); drawCross(); drawGrid(); }
   drawAll();
   setAutoRefresh();
   const aiNote = sessionStorage.getItem(`db-ai-${did}`);
@@ -2228,7 +2791,8 @@ async function viewDashboard(main, r) {
   return () => {
     clearInterval(S.refreshTimer); window.removeEventListener('beforeunload', unload); window.removeEventListener('db-theme', onTheme); window.removeEventListener('resize', onResize);
     document.body.classList.remove('dash-app');
-    Object.values(S.charts).forEach((c) => c.destroy());
+    Object.values(S.charts).forEach((c) => { try { c.destroy(); } catch { /* gone */ } });
+    Object.values(S.park || {}).forEach((c) => { try { c.destroy(); } catch { /* gone */ } });
     main.classList.remove('flush');
     if (S.dirty && canEdit) api(`/api/dashboards/${did}`, { method: 'PUT', body: { name: S.name, description: dash.description, definition: S.D } }).catch(() => {});
   };

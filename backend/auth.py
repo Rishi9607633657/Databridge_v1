@@ -108,9 +108,9 @@ def create_user(body, must_change=True, actor=None):
     _check_password(body.get("password"))
     uid = uuid.uuid4().hex[:10]
     try:
-        store.x("INSERT INTO users (id, username, name, email, password_hash, role, active, created, must_change) VALUES (?,?,?,?,?,?,1,?,?)",
+        store.x("INSERT INTO users (id, username, name, email, password_hash, role, active, created, must_change, company) VALUES (?,?,?,?,?,?,1,?,?,?)",
                 (uid, username, body.get("name") or username, body.get("email") or "", hash_password(body["password"]), role, _now(),
-                 1 if must_change else 0))
+                 1 if must_change else 0, (body.get("company") or "").strip()[:120]))
     except Exception:
         raise HTTPException(409, f"User {username!r} already exists")
     return _public(store.one("SELECT * FROM users WHERE id=?", (uid,)))
@@ -165,16 +165,16 @@ def update_user(uid, body, actor):
     if not u:
         raise HTTPException(404, "User not found")
     fields = {}
-    for k in ("name", "email"):
+    for k in ("name", "email", "company"):
         if k in body:
-            fields[k] = body[k] or ""
+            fields[k] = (body[k] or "").strip()[:120] if k == "company" else body[k] or ""
     if "role" in body:
         if body["role"] not in ROLES:
             raise HTTPException(400, "Invalid role")
         if (body["role"] == "super_admin" or u["role"] == "super_admin") and body["role"] != u["role"] and (actor or {}).get("role") != "super_admin":
             raise HTTPException(403, "Only a super admin can grant or remove super admin")
         fields["role"] = body["role"]
-    if u["role"] == "super_admin" and (actor or {}).get("role") != "super_admin" and set(body) - {"name", "email"}:
+    if u["role"] == "super_admin" and (actor or {}).get("role") != "super_admin" and set(body) - {"name", "email", "company"}:
         raise HTTPException(403, "Only a super admin can change a super admin account")
     if "active" in body:
         fields["active"] = 1 if body["active"] else 0
@@ -257,13 +257,19 @@ def login(username, password, ip="", agent=""):
         audit(username or "?", "login.failed", "", 401, ip)
         raise HTTPException(401, "Wrong username or password")
     store.x("DELETE FROM login_fail WHERE username=?", (username.lower(),))
+    if not is_admin(u) and (env("SSO_ONLY", "false") or "false").lower() == "true":
+        raise HTTPException(403, "Sign in with your company account (button above). Password sign-in is only for admins.")
+    return new_session(u, ip, agent), _public(u)
+
+
+def new_session(u, ip="", agent="", method="password"):
     token = secrets.token_urlsafe(32)
     store.x("INSERT INTO sessions (token_hash, user_id, created, expires, ip, agent) VALUES (?,?,?,?,?,?)",
             (_sha(token), u["id"], _now(), _now() + SESSION_HOURS * 3600, ip, (agent or "")[:200]))
     store.update("users", u["id"], last_login=_now())
     store.x("DELETE FROM sessions WHERE expires < ?", (_now(),))
-    audit(u["username"], "login", "", 200, ip)
-    return token, _public(u)
+    audit(u["username"], "login" if method == "password" else f"login.{method}", "", 200, ip)
+    return token
 
 
 def logout(token):
@@ -298,6 +304,22 @@ def resolve(cookie_token=None, bearer=None):
     return None
 
 
+def basic_token(b64):
+    """HTTP Basic credentials -> the access token in the password (user name must belong to the token's owner)."""
+    import base64
+    try:
+        user, _, pw = base64.b64decode(b64).decode("utf-8").partition(":")
+    except Exception:  # noqa: BLE001
+        return None
+    t = store.one("SELECT user_id FROM api_tokens WHERE token_hash=?", (_sha(pw),)) if pw else None
+    if not t:
+        return None
+    u = store.one("SELECT username, email FROM users WHERE id=?", (t["user_id"],))
+    if not u or user.strip().lower() not in {(u["username"] or "").lower(), (u["email"] or "").lower()}:
+        return None
+    return pw
+
+
 # ------------------------------------------------------------------ API tokens
 def create_token(user, name, days):
     if user["id"].startswith("__"):
@@ -318,10 +340,10 @@ def revoke_token(user, tid):
 
 
 # ------------------------------------------------------------------ authorisation policy
-PUBLIC = (re.compile(r"^/api/auth/(me|login|setup|signup|logout)$"), re.compile(r"^/api/datahub/hooks/[A-Za-z0-9_-]{20,}$"))
-ADMIN_ONLY = re.compile(r"^/api/(admin/|users|audit|markets/install|clusters-usage)")
+PUBLIC = (re.compile(r"^/api/auth/(me|login|setup|signup|logout)$"), re.compile(r"^/api/auth/sso/(microsoft|google|oidc)/(start|callback)$"), re.compile(r"^/api/datahub/hooks/[A-Za-z0-9_-]{20,}$"))
+ADMIN_ONLY = re.compile(r"^/api/(admin/|users|audit|markets/install|clusters-usage|governance|notify/|budgets|invoices)")
 ADMIN_WRITE = re.compile(r"^/api/(linked-services|clusters)")        # editors may read/use, only admins change connections
-VIEWER_POST_OK = re.compile(r"^/api/(auth/(password|tokens)|dora/chat|linked-services/test$|dashboards/[^/]+/(query|options|story|reconcile|version)$|tts$)")
+VIEWER_POST_OK = re.compile(r"^/api/(auth/(password|tokens)|dora/chat|ml/serving/[^/]+/invocations$|ask$|linked-services/test$|dashboards/[^/]+/(query|options|story|reconcile|version)$|tts$)")
 
 
 SUPER_ONLY = re.compile(r"^/api/(features|super)(/|$)")

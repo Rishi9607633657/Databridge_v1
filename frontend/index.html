@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DataBridge</title>
+<title>DataBridge AI</title>
 <link rel="icon" href="/static/favicon.png" type="image/png">
 <link rel="stylesheet" href="/static/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/static/vendor/codemirror/addon/show-hint.css">
@@ -18,22 +18,37 @@
   <nav class="sidebar" aria-label="Primary">
     <a class="brand" href="#/home" aria-label="DataBridge home">
       <img src="/static/logo-mark.png" width="34" height="34" alt="">
-      <span class="brand-name">Data<b>Bridge</b></span>
+      <span class="brand-txt"><span class="brand-name">Data<b>Bridge</b><i class="brand-ai"> AI</i></span><span class="brand-sub">Unified Data Intelligence</span></span>
     </a>
     <button type="button" class="new-btn" id="new-btn">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New
     </button>
+    <!-- one menu for the whole product: every original page plus the DataBridge AI overview pages (nav-ov) -->
+    <p class="nav-sec">Analytics</p>
     <a class="nav" data-view="home" href="#/home"><span data-icon="home"></span>Home</a>
+    <a class="nav" data-view="dashboards" href="#/dashboards"><span data-icon="chart"></span>Dashboards</a>
+    <a class="nav nav-ov" href="/overview" title="Business Overview: KPIs, 3D globe, analytics, AI insights and reports"><span data-icon="overview"></span>Business Overview</a>
+    <a class="nav" data-view="ask" href="#/ask"><span data-icon="chat"></span>Ask data</a>
+    <p class="nav-sec">Build</p>
     <a class="nav" data-view="workspace" href="#/workspace"><span data-icon="folder"></span>Workspace</a>
+    <a class="nav" data-view="sql" href="#/sql"><span data-icon="term"></span>SQL Editor</a>
+    <a class="nav" data-view="workflows" href="#/workflows"><span data-icon="flow"></span>Workflows</a>
+    <a class="nav" data-view="ml" href="#/ml"><span data-icon="flask"></span>Machine learning</a>
+    <p class="nav-sec">Data</p>
     <a class="nav" data-view="catalog" href="#/catalog"><span data-icon="db"></span>Catalog</a>
     <a class="nav" data-view="datahub" href="#/datahub"><span data-icon="hub"></span>Data Hub</a>
-    <a class="nav" data-view="workflows" href="#/workflows"><span data-icon="flow"></span>Workflows</a>
+    <a class="nav nav-ov" href="/overview#/sources"><span data-icon="sources"></span>Data Sources</a>
+    <p class="nav-sec">Operations</p>
     <a class="nav" data-view="compute" href="#/compute"><span data-icon="cpu"></span>Compute</a>
-    <a class="nav" data-view="sql" href="#/sql"><span data-icon="term"></span>SQL Editor</a>
-    <a class="nav" data-view="dashboards" href="#/dashboards"><span data-icon="chart"></span>Dashboards</a>
-    <a class="nav" data-view="markets" href="#/markets"><span data-icon="trend"></span>Markets</a>
+    <a class="nav nav-ov" href="/overview#/monitoring"><span data-icon="pulse"></span>Monitoring</a>
+    <a class="nav" data-view="alerts" href="#/alerts"><span data-icon="bell"></span>Alerts</a>
     <a class="nav" data-view="logs" href="#/logs"><span data-icon="logs"></span>Logs</a>
+    <p class="nav-sec">Admin</p>
+    <a class="nav" data-view="governance" href="#/governance"><span data-icon="shield"></span>Governance</a>
+    <a class="nav nav-ov" data-admin href="/overview#/users"><span data-icon="user"></span>Users</a>
+    <a class="nav nav-ov" href="/overview#/integrations"><span data-icon="plug"></span>Integrations</a>
     <a class="nav" data-view="admin" href="#/admin"><span data-icon="gear"></span>Admin</a>
+    <a class="nav nav-ov" href="/overview#/settings"><span data-icon="sliders"></span>Settings</a>
     <div class="grow"></div>
     <div class="sidebar-foot" id="conn-summary"></div>
   </nav>
@@ -78,6 +93,10 @@
 <script src="/static/dash_ml.js"></script>
   <script src="/static/dash_themes.js"></script>
   <script src="/static/dash_model.js"></script>
+<script src="/static/motion3d.js"></script>
+<script src="/static/geo3d.js"></script>
+<script src="/static/dash_charts.js"></script>
+<script src="/static/dash_overview.js"></script>
 <script src="/static/dashboards.js"></script>
 <script src="/static/git_ui.js"></script>
 <script src="/static/delta_ui.js"></script>
@@ -86,8 +105,14 @@
 <script src="/static/ai_chat.js"></script>
 <script src="/static/pipelines.js"></script>
 <script src="/static/jobs.js"></script>
-<script src="/static/markets.js"></script>
 <script src="/static/clusters.js"></script>
+<script src="/static/finops.js"></script>
+<script src="/static/alerts.js"></script>
+<script src="/static/governance.js"></script>
+<script src="/static/lineage.js"></script>
+<script src="/static/quality.js"></script>
+<script src="/static/ml.js"></script>
+<script src="/static/ask.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

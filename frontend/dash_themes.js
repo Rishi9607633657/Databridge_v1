@@ -4,14 +4,28 @@
 
 /* surface = how cards are drawn: flat | elevated | outline | glass | liquid | neo | clay | brutal | neon | paper */
 const DB_THEME_DEFS = [
+  // ---- Signature (curated: shown in the Style panel)
+  /* Vivid = the DataBridge AI overview look: pale blue-grey page, white cards, icon KPI tiles, blue/green/violet/amber/rose */
+  { id: 'vivid', name: 'Vivid', group: 'Signature', pick: true, surface: 'flat', headLight: true,
+    v: { bg: '#F3F6FB', card: '#FFFFFF', line: '#E6EBF2', text: '#0F1B33', muted: '#667085', grid: '#E8EDF4', head: '#F3F6FB', headText: '#0F1B33', accent: '#2F6BFF', radius: '18px' },
+    p: ['#2F6BFF', '#12B76A', '#8B5CF6', '#F79009', '#F43F5E', '#0EA5E9', '#14B8A6', '#F5B70B', '#64748B', '#EC4899'] },
+  { id: 'clean', name: 'Clean', group: 'Signature', pick: true, surface: 'flat', headLight: true,
+    v: { bg: '#F4F6FA', card: '#FFFFFF', line: '#E4E8F0', text: '#111A2E', muted: '#5F6B82', grid: '#EDF0F5', head: '#FFFFFF', headText: '#111A2E', accent: '#2563EB', radius: '16px' },
+    p: ['#2563EB', '#0EA5E9', '#14B8A6', '#F59E0B', '#8B5CF6', '#EC4899', '#F97316', '#22C55E', '#64748B', '#EF4444'] },
+  { id: 'porcelain', name: 'Porcelain', group: 'Signature', pick: true, surface: 'soft', headLight: true,
+    v: { bg: '#F5F3EF', card: '#FFFFFF', line: '#ECE7E0', text: '#22201C', muted: '#7A7369', grid: '#F1EDE7', head: '#F5F3EF', headText: '#22201C', accent: '#5B5BD6', radius: '20px' },
+    p: ['#5B5BD6', '#7FB0D9', '#F2A65A', '#E2725B', '#58B09C', '#A78BFA', '#E8C468', '#6C8EBF', '#C77DBA', '#8FA998'] },
+  { id: 'sandstone', name: 'Sandstone', group: 'Signature', pick: true, surface: 'soft', headLight: true,
+    v: { bg: '#F2EDE4', card: '#FFFCF7', line: '#E7DED0', text: '#2A2017', muted: '#86745F', grid: '#EFE7DA', head: '#F2EDE4', headText: '#2A2017', accent: '#F0652F', radius: '20px' },
+    p: ['#F0652F', '#2A2017', '#F5A35C', '#8C6E54', '#E9C46A', '#5E8C7A', '#C9B79C', '#D9480F', '#A0522D', '#6B705C'] },
+  { id: 'graphite', name: 'Graphite', group: 'Signature', pick: true, surface: 'flat', dark: true, headLight: true,
+    v: { bg: '#0E1014', card: '#161920', line: '#232731', text: '#ECEEF2', muted: '#99A0AC', grid: '#20242D', head: '#0E1014', headText: '#ECEEF2', accent: '#2DD4BF', radius: '16px' },
+    p: ['#2DD4BF', '#60A5FA', '#F59E0B', '#F472B6', '#A78BFA', '#34D399', '#FB7185', '#22D3EE', '#FBBF24', '#818CF8'] },
   // ---- Classic
-  { id: 'clean', name: 'Clean', group: 'Classic', surface: 'flat', headLight: true,
-    v: { bg: '#F3F5F9', card: '#FFFFFF', line: '#E1E6EF', text: '#14213D', muted: '#5B6B86', grid: '#EEF1F6', head: '#FFFFFF', headText: '#14213D', accent: '#0A5CFF', radius: '14px' },
-    p: ['#0A5CFF', '#12B5CB', '#F59E0B', '#E11D74', '#22C55E', '#8B5CF6', '#F97316', '#0EA5A4', '#84CC16', '#EF4444'] },
-  { id: 'ocean', name: 'Ocean', group: 'Classic', surface: 'elevated',
+  { id: 'ocean', pick: true, name: 'Ocean', group: 'Classic', surface: 'elevated',
     v: { bg: '#E7F0FA', card: '#FFFFFF', line: '#D6E2F0', text: '#13233F', muted: '#5B6B86', grid: '#E3EAF4', head: 'linear-gradient(100deg,#0B3C7D 0%,#0A62C9 55%,#12A7D6 100%)', headText: '#FFFFFF', accent: '#0A62C9', radius: '14px' },
     p: ['#0B4F9C', '#0A84C6', '#12B5CB', '#35C9A5', '#F59E0B', '#1E3A8A', '#E11D74', '#38BDF8', '#5EEAD4', '#2563EB'] },
-  { id: 'midnight', name: 'Midnight', group: 'Classic', surface: 'flat', dark: true,
+  { id: 'midnight', pick: true, name: 'Midnight', group: 'Classic', surface: 'flat', dark: true,
     v: { bg: '#0E1430', card: '#1A2150', line: '#2A3270', text: '#EEF1FF', muted: '#A4AEDB', grid: '#283068', head: 'linear-gradient(100deg,#0B1028 0%,#1B2460 100%)', headText: '#FFFFFF', accent: '#3DD9EB', radius: '14px' },
     p: ['#3DD9EB', '#7C83FD', '#F7B32B', '#FF6B9A', '#2EE59D', '#A78BFA', '#FB923C', '#38BDF8', '#C4F042', '#F87171'] },
   { id: 'aurora', name: 'Aurora', group: 'Classic', surface: 'elevated',
@@ -28,11 +42,11 @@ const DB_THEME_DEFS = [
     v: { bg: 'radial-gradient(at 12% 18%,#7F5AF0 0,transparent 42%),radial-gradient(at 88% 12%,#2CB67D 0,transparent 38%),radial-gradient(at 75% 88%,#FF8906 0,transparent 42%),radial-gradient(at 18% 90%,#E53170 0,transparent 40%),#16163A',
       card: 'rgba(255,255,255,.12)', line: 'rgba(255,255,255,.28)', text: '#FFFFFF', muted: 'rgba(255,255,255,.74)', grid: 'rgba(255,255,255,.14)', head: 'rgba(255,255,255,.06)', headText: '#FFFFFF', accent: '#A78BFA', radius: '20px', blur: '18px' },
     p: ['#A78BFA', '#34D399', '#FDBA74', '#F472B6', '#67E8F9', '#FDE047', '#818CF8', '#FB7185', '#5EEAD4', '#C4B5FD'] },
-  { id: 'glass-light', name: 'Frosted Glass', group: 'Glass & soft UI', surface: 'glass', headLight: true,
+  { id: 'glass-light', pick: true, name: 'Frosted Glass', group: 'Glass & soft UI', surface: 'glass', headLight: true,
     v: { bg: 'radial-gradient(at 10% 10%,#C7D2FE 0,transparent 45%),radial-gradient(at 90% 20%,#FBCFE8 0,transparent 40%),radial-gradient(at 60% 95%,#A7F3D0 0,transparent 45%),#F4F6FB',
       card: 'rgba(255,255,255,.55)', line: 'rgba(255,255,255,.75)', text: '#1E2235', muted: '#596079', grid: 'rgba(30,34,53,.08)', head: 'rgba(255,255,255,.4)', headText: '#1E2235', accent: '#6366F1', radius: '20px', blur: '16px' },
     p: ['#6366F1', '#EC4899', '#10B981', '#F59E0B', '#06B6D4', '#8B5CF6', '#F43F5E', '#84CC16', '#0EA5E9', '#A855F7'] },
-  { id: 'liquid', name: 'Liquid Glass', group: 'Glass & soft UI', surface: 'liquid', dark: true,
+  { id: 'liquid', pick: true, name: 'Liquid Glass', group: 'Glass & soft UI', surface: 'liquid', dark: true,
     v: { bg: 'radial-gradient(60% 50% at 20% 20%,#00C2FF55 0,transparent 70%),radial-gradient(50% 50% at 85% 25%,#B14CFF66 0,transparent 70%),radial-gradient(60% 60% at 60% 90%,#FF7A3D55 0,transparent 70%),linear-gradient(160deg,#0A1630,#101C3E 50%,#0C1226)',
       card: 'rgba(255,255,255,.07)', line: 'rgba(255,255,255,.22)', text: '#F5F8FF', muted: 'rgba(235,242,255,.72)', grid: 'rgba(255,255,255,.10)', head: 'rgba(255,255,255,.05)', headText: '#FFFFFF', accent: '#5AD8FF', radius: '26px', blur: '26px' },
     p: ['#5AD8FF', '#C084FC', '#FF9F6E', '#4ADE80', '#F472B6', '#FDE68A', '#60A5FA', '#2DD4BF', '#FB7185', '#A5B4FC'] },
@@ -53,9 +67,13 @@ const DB_THEME_DEFS = [
     v: { bg: '#FFE9DC', card: '#FFF8F2', line: 'transparent', text: '#4A2C2A', muted: '#93706B', grid: '#F8E6DB', head: '#FFE9DC', headText: '#4A2C2A', accent: '#FF7A59', radius: '28px' },
     p: ['#FF7A59', '#FFB547', '#5BC0BE', '#7B9E89', '#E56B6F', '#6D597A', '#F4A261', '#2A9D8F', '#E9C46A', '#B56576'] },
   // ---- Dark & bold
-  { id: 'executive', name: 'Executive Gold', group: 'Dark & bold', surface: 'elevated', dark: true,
+  { id: 'executive', pick: true, name: 'Executive Gold', group: 'Dark & bold', surface: 'elevated', dark: true,
     v: { bg: '#0D0D0D', card: '#171717', line: '#2A2A2A', text: '#F5F5F5', muted: '#A3A3A3', grid: '#262626', head: 'linear-gradient(90deg,#0D0D0D,#221C0E)', headText: '#E8C468', accent: '#D4AF37', radius: '12px' },
     p: ['#D4AF37', '#F5D97B', '#B8860B', '#E8E8E8', '#8C7A4B', '#C0C0C0', '#FFE8A3', '#9C7C38', '#7A7A7A', '#F0C75E'] },
+  { id: 'holo', pick: true, name: 'Holo Command', group: 'Dark & bold', surface: 'glass', dark: true,
+    v: { bg: 'radial-gradient(70% 55% at 85% 0%,#5B2BE055 0,transparent 70%),radial-gradient(60% 50% at 0% 100%,#1E3AFF33 0,transparent 70%),linear-gradient(165deg,#0B0E1F 0%,#111633 55%,#0A0C1A 100%)',
+      card: 'rgba(22,26,52,.78)', line: 'rgba(124,131,253,.22)', text: '#EEF0FF', muted: '#9CA3D9', grid: 'rgba(124,131,253,.14)', head: 'rgba(14,17,38,.85)', headText: '#FFFFFF', accent: '#7C83FD', radius: '16px', blur: '14px' },
+    p: ['#7C83FD', '#22D3EE', '#F59E0B', '#F472B6', '#34D399', '#A78BFA', '#FB7185', '#38BDF8', '#FDE047', '#2DD4BF'] },
   { id: 'cyberpunk', name: 'Cyberpunk Neon', group: 'Dark & bold', surface: 'neon', dark: true,
     v: { bg: 'radial-gradient(at 50% 0%,#2A0845 0,transparent 60%),#07000F', card: '#12001F', line: '#FF2BD6', text: '#F6E8FF', muted: '#B9A3D6', grid: '#2B0F45', head: 'linear-gradient(90deg,#1A0030,#2C0057)', headText: '#00F0FF', accent: '#00F0FF', radius: '10px', font: '"Rajdhani","IBM Plex Sans",sans-serif' },
     p: ['#00F0FF', '#FF2BD6', '#F9F871', '#7CFF6B', '#FF6B35', '#9D4EDD', '#00FFA3', '#FF3864', '#3A86FF', '#FFBE0B'] },
@@ -108,10 +126,15 @@ function dbResolveTheme(lookId, custom) {
   }
   def = def || DB_THEME_BY_ID.clean;
   const c = { ...extra, ...(custom || {}) };
+  if (def.id === 'vivid' && document.documentElement.dataset.theme === 'dark' && !Object.keys(c).length) {   // "Vivid" follows the app's dark mode too
+    def = { ...def, dark: true, headLight: false,
+      v: { bg: '#0A1120', card: '#111A2C', line: '#22304A', text: '#E8EDF6', muted: '#94A2B8', grid: '#1D2A41', head: '#0A1120', headText: '#E8EDF6', accent: '#5B8CFF', radius: '18px' },
+      p: ['#5B8CFF', '#32D583', '#A78BFA', '#FDB022', '#FB7185', '#38BDF8', '#2DD4BF', '#FACC15', '#94A3B8', '#F472B6'] };
+  }
   if (def.id === 'clean' && document.documentElement.dataset.theme === 'dark' && !Object.keys(c).length) {   // "Clean" follows the app's dark mode
     def = { ...def, dark: true, headLight: false,
-      v: { bg: '#0B1220', card: '#111A2E', line: '#24314D', text: '#E6EBF5', muted: '#8F9BB6', grid: '#1E2A44', head: '#0F1830', headText: '#E6EBF5', accent: '#4C8DFF', radius: '14px' },
-      p: ['#4C8DFF', '#22D3EE', '#F59E0B', '#F472B6', '#34D399', '#A78BFA', '#FB923C', '#2DD4BF', '#A3E635', '#F87171'] };
+      v: { bg: '#0B1120', card: '#111827', line: '#1F2A40', text: '#E7ECF5', muted: '#94A0B8', grid: '#1C2538', head: '#0B1120', headText: '#E7ECF5', accent: '#4C8DFF', radius: '16px' },
+      p: ['#4C8DFF', '#22D3EE', '#2DD4BF', '#F59E0B', '#A78BFA', '#F472B6', '#FB923C', '#34D399', '#94A3B8', '#F87171'] };
   }
   const v = { ...def.v };
   ['bg', 'card', 'text', 'muted', 'accent', 'head', 'headText', 'line', 'grid'].forEach((k) => { if (c[k]) v[k] = c[k]; });
@@ -217,7 +240,7 @@ function dbThemeCustomizer(D, onChange, onSaveAs) {
   };
   const font = el('select', { class: 'field' }, DB_FONTS.map(([v, l]) => el('option', { value: v, selected: (c.font || '') === v }, l)));
   font.addEventListener('change', () => { if (font.value) c.font = font.value; else delete c.font; onChange(); });
-  const surf = el('select', { class: 'field' }, [['', 'Theme default'], ['flat', 'Flat'], ['elevated', 'Elevated (shadow)'], ['outline', 'Outline'], ['glass', 'Glass (frosted)'], ['liquid', 'Liquid glass'],
+  const surf = el('select', { class: 'field' }, [['', 'Theme default'], ['flat', 'Flat'], ['soft', 'Soft (shadow, no border)'], ['elevated', 'Elevated (shadow)'], ['outline', 'Outline'], ['glass', 'Glass (frosted)'], ['liquid', 'Liquid glass'],
     ['neo', 'Neumorphic (soft)'], ['clay', 'Clay (puffy)'], ['brutal', 'Neo-brutal'], ['neon', 'Neon glow'], ['paper', 'Paper']].map(([v, l]) => el('option', { value: v, selected: (c.surface || '') === v }, l)));
   surf.addEventListener('change', () => { if (surf.value) c.surface = surf.value; else delete c.surface; onChange(true); });
   box.append(

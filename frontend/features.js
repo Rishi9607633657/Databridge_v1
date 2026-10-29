@@ -10,9 +10,9 @@ const FEAT_ROUTE = {
   notebook: 'notebooks', catalog: 'catalog', sql: 'sql_editor', compute: 'compute', logs: 'logs',
   dashboards: 'dashboards', dashboard: 'dashboards', job: 'jobs', jobedit: 'jobs', run: 'jobs',
   pipeline: 'pipelines', prun: 'pipelines', workflow: 'airflow', workflows: ['jobs', 'airflow', 'pipelines'],
-  datahub: ['data_hub', 'airbyte'], markets: 'markets',
+  datahub: ['data_hub', 'airbyte'], alerts: 'alerts', alert: 'alerts', ask: 'ask_data', ml: 'ml',
 };
-const FEAT_NAV = { catalog: 'catalog', sql: 'sql_editor', compute: 'compute', logs: 'logs', dashboards: 'dashboards', workflows: ['jobs', 'airflow', 'pipelines'], datahub: ['data_hub', 'airbyte'], markets: 'markets' };
+const FEAT_NAV = { catalog: 'catalog', sql: 'sql_editor', compute: 'compute', logs: 'logs', dashboards: 'dashboards', workflows: ['jobs', 'airflow', 'pipelines'], datahub: ['data_hub', 'airbyte'], alerts: 'alerts', ask: 'ask_data', ml: 'ml' };
 const featOk = (need) => (Array.isArray(need) ? need.some(dbFeat) : dbFeat(need));
 
 async function loadFeatures() {
@@ -22,6 +22,7 @@ async function loadFeatures() {
   }
   Object.keys(FEAT).forEach((k) => document.documentElement.classList.toggle(`feat-off-${k}`, !FEAT[k]));
   const ask = document.getElementById('aic-btn'); if (ask) ask.hidden = !dbFeat('ai_assistant');
+  if (typeof tidyNavSections === 'function') tidyNavSections();
 }
 
 /* returns a blocked-page element when the route's feature is off, else null */

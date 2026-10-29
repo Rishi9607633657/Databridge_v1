@@ -113,11 +113,28 @@ store = Store(DB_PATH)
 
 
 # ---------------- helpers ----------------
+def _cluster_name(c):
+    if not (c or {}).get("cluster_id"):
+        return None
+    try:
+        from . import clusters
+        return clusters.get(c["cluster_id"])["name"]
+    except Exception:  # noqa: BLE001
+        return "(deleted cluster)"
+
+
 def _job_out(r):
     j = dict(r)
     for k in ("cluster", "tasks", "parameters"):
         j[k] = json.loads(j[k]) if j.get(k) else ({} if k != "tasks" else [])
     j["paused"] = bool(j["paused"])
+    j["cluster_name"] = _cluster_name(j["cluster"])
+    ft = j.pop("file_trigger", None)
+    j["file_trigger"] = json.loads(ft) if ft else None
+    if j["file_trigger"]:
+        from . import filetrigger
+        j["file_trigger_status"] = filetrigger.status(j)
+    j.pop("file_state", None)
     return j
 
 
@@ -125,6 +142,7 @@ def _run_out(r):
     d = dict(r)
     d["parameters"] = json.loads(d["parameters"]) if d.get("parameters") else {}
     d["cluster"] = json.loads(d["cluster"]) if d.get("cluster") else {}
+    d["cluster_name"] = _cluster_name(d["cluster"])
     d["job_spec"] = json.loads(d["job_spec"]) if d.get("job_spec") else None
     d["duration"] = (d["end"] or _now()) - d["start"] if d.get("start") else None
     return d
@@ -237,7 +255,10 @@ def _validate_job(body: dict) -> dict:
     tz_name = body.get("timezone") or "UTC"
     if schedule:
         validate_cron(schedule, tz_name)
+    from . import filetrigger
+    ft = filetrigger.clean(body.get("file_trigger"))
     return {"name": name, "description": body.get("description") or "", "schedule": schedule, "timezone": tz_name,
+            "file_trigger": json.dumps(ft) if ft else None,
             "paused": 1 if body.get("paused") else 0, "max_concurrent": max(1, int(body.get("max_concurrent") or 1)),
             "cluster": json.dumps(body.get("cluster") or {}), "tasks": json.dumps(clean),
             "parameters": json.dumps({str(k): str(v) for k, v in (body.get("parameters") or {}).items()})}
@@ -263,10 +284,14 @@ class JobManager:
         for t in store.q("SELECT id FROM task_runs WHERE state IN ('PENDING','RUNNING','WAITING_FOR_RETRY')"):
             store.update("task_runs", t["id"], state="FAILED", end=_now(), error="DataBridge restarted while the task was active")
         self._sched_task = asyncio.create_task(self._scheduler())
+        from . import filetrigger
+        self._file_task = asyncio.create_task(filetrigger.loop(self))
 
     async def shutdown(self):
         if self._sched_task:
             self._sched_task.cancel()
+        if getattr(self, "_file_task", None):
+            self._file_task.cancel()
         for ctx in list(self.active.values()):
             ctx.cancel.set()
 
@@ -291,16 +316,29 @@ class JobManager:
         job_id = uuid.uuid4().hex[:10]
         nxt = next_fire(v["schedule"], v["timezone"]).isoformat() if v["schedule"] else None
         store.x("INSERT INTO jobs (id, name, description, schedule, timezone, paused, max_concurrent, cluster, tasks, "
-                "parameters, next_run, created, updated) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "parameters, next_run, created, updated, file_trigger) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (job_id, v["name"], v["description"], v["schedule"], v["timezone"], v["paused"], v["max_concurrent"],
-                 v["cluster"], v["tasks"], v["parameters"], nxt, _now(), _now()))
+                 v["cluster"], v["tasks"], v["parameters"], nxt, _now(), _now(), v["file_trigger"]))
+        self._reset_file_trigger(job_id, None, v["file_trigger"])
         return self.get_job(job_id)
+
+    def _reset_file_trigger(self, job_id, old, new):
+        if not new:
+            store.x("UPDATE jobs SET file_state=NULL WHERE id=?", (job_id,))
+            return
+        o, n = json.loads(old) if old else {}, json.loads(new)
+        if (o or {}).get("location") != n["location"] or o.get("pattern") != n["pattern"] or o.get("connection_id") != n.get("connection_id") \
+                or o.get("recursive") != n.get("recursive"):
+            from . import filetrigger
+            filetrigger.reset(job_id, n)
 
     def update_job(self, job_id, body):
         self.get_job(job_id)
+        old = store.one("SELECT file_trigger FROM jobs WHERE id = ?", (job_id,))["file_trigger"]
         v = _validate_job(body)
         nxt = next_fire(v["schedule"], v["timezone"]).isoformat() if v["schedule"] else None
         store.update("jobs", job_id, **v, next_run=nxt, updated=_now())
+        self._reset_file_trigger(job_id, old, v["file_trigger"])
         return self.get_job(job_id)
 
     def delete_job(self, job_id):
@@ -586,6 +624,8 @@ class JobManager:
         cluster = job.get("cluster") or {}
         env = cluster_env(cluster, job["name"])
         env["DATABRIDGE_NOTEBOOK_PATH"] = task["notebook_path"]
+        env["DATABRIDGE_JOB_NAME"] = job["name"] if job.get("id") != ADHOC_JOB else ""
+        env["DATABRIDGE_JOB_ID"] = job.get("id") or ""
         master = env.get("SPARK_MASTER") or "default master"
         add_log(f"[stratum] Starting job cluster ({master}) for task '{task['task_key']}'")
         save(True, current_cell=None)
@@ -727,3 +767,6 @@ def all_notebooks():
     root = settings.workspace
     nbs = [p for p in root.rglob("*.ipynb") if not any(part.startswith(".") for part in p.relative_to(root).parts)]
     return sorted(p.relative_to(root).as_posix() for p in nbs)
+
+
+from . import filetrigger as _filetrigger  # noqa: E402,F401  (adds the file-trigger columns to the jobs table)

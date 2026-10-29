@@ -1,0 +1,99 @@
+/* Design tokens. Light is the default; dark is a full set (header toggle or Settings). */
+:root,
+:root[data-theme='light'] {
+  --bg: #f3f6fb;
+  --surface: #ffffff;
+  --surface-2: #f7f9fc;
+  --surface-3: #eef2f8;
+  --border: #e6ebf2;
+  --border-2: #d7dee8;
+  --text: #0f1b33;
+  --text-2: #344054;
+  --muted: #667085;
+  --faint: #98a2b3;
+  --primary: #2f6bff;
+  --primary-2: #1f57ea;
+  --primary-soft: #eaf1ff;
+  --primary-ink: #1f4ed8;
+  --pos: #079455;
+  --neg: #e5372b;
+  --warn: #dc6803;
+  --active-bg: #e6eeff;
+  --ring-track: #eef2f7;
+  --map-sea: #eaf2fd;
+  --map-land: #cfdcee;
+  --map-land-on: #a7c8f6;
+  --map-border: #ffffff;
+  --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.04), 0 2px 8px -4px rgba(16, 24, 40, 0.05);
+  --shadow-2: 0 1px 2px rgba(16, 24, 40, 0.05), 0 14px 30px -14px rgba(16, 24, 40, 0.16);
+  --shadow-pop: 0 20px 48px -14px rgba(16, 24, 40, 0.24), 0 2px 6px rgba(16, 24, 40, 0.06);
+  --mix-base: #ffffff;
+  --mix-ink: #000000;
+  --soft-amt: 11%;
+  --ink-amt: 72%;
+  --scrim: rgba(15, 23, 42, 0.42);
+  --radius: 18px;
+  --radius-sm: 12px;
+  --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-display: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --bg: #0a1120;
+  --surface: #111a2c;
+  --surface-2: #142036;
+  --surface-3: #1a2740;
+  --border: #22304a;
+  --border-2: #2d3d5a;
+  --text: #e8edf6;
+  --text-2: #c5cedc;
+  --muted: #94a2b8;
+  --faint: #6c7b94;
+  --primary: #5b8cff;
+  --primary-2: #7aa2ff;
+  --primary-soft: rgba(91, 140, 255, 0.16);
+  --primary-ink: #a9c2ff;
+  --pos: #32d583;
+  --neg: #f97066;
+  --warn: #fdb022;
+  --active-bg: rgba(91, 140, 255, 0.16);
+  --ring-track: #1d2a41;
+  --map-sea: #0e1930;
+  --map-land: #24365a;
+  --map-land-on: #2f62c4;
+  --map-border: #0e1930;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 16px 34px -16px rgba(0, 0, 0, 0.65);
+  --shadow-pop: 0 24px 54px -14px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --mix-base: transparent;
+  --mix-ink: #ffffff;
+  --soft-amt: 18%;
+  --ink-amt: 62%;
+  --scrim: rgba(2, 6, 18, 0.62);
+  color-scheme: dark;
+}
+
+/* follow the system only when no theme was chosen */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #0a1120;
+    --surface: #111a2c;
+    --surface-2: #142036;
+    --surface-3: #1a2740;
+    --border: #22304a;
+    --border-2: #2d3d5a;
+    --text: #e8edf6;
+    --text-2: #c5cedc;
+    --muted: #94a2b8;
+    --faint: #6c7b94;
+    --primary: #5b8cff;
+    --primary-soft: rgba(91, 140, 255, 0.16);
+    --primary-ink: #a9c2ff;
+    --mix-base: transparent;
+    --mix-ink: #ffffff;
+    --soft-amt: 18%;
+    --ink-amt: 62%;
+    color-scheme: dark;
+  }
+}

@@ -1,0 +1,1 @@
+import{j as e}from"./webgl-BzFiKv2c.js";function d({title:r,sub:s,actions:a}){return e.jsxs("div",{className:"page-head",children:[e.jsxs("div",{children:[e.jsx("h1",{children:r}),s&&e.jsx("p",{className:"page-sub",children:s})]}),a&&e.jsx("div",{className:"page-actions",children:a})]})}export{d as P};

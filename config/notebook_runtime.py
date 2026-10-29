@@ -325,7 +325,7 @@ class _DbUtils:
 
     def help(self):
         print("dbutils.widgets (text, dropdown, get, getAll) · dbutils.notebook (run, runMultiple, exit) · "
-              "dbutils.fs (ls, head, put, mkdirs, rm, cp, mv)")
+              "dbutils.fs (ls, head, put, mkdirs, rm, cp, mv) · dbutils.quality.check(table)")
 
 
 dbutils = _DbUtils()
@@ -978,5 +978,171 @@ except Exception:  # noqa: BLE001
     pass
 try:   # let a managed table be re-created over a leftover folder (spark_init.py is user-owned, so set it here too)
     _db_builtins.spark.conf.set("spark.sql.legacy.allowNonEmptyLocationInCTAS", "true")
+except Exception:  # noqa: BLE001
+    pass
+
+# ---------------------------------------------------------------- lineage (Catalog › Lineage)
+# Reports which tables a notebook / job / SQL query reads and writes, so DataBridge can draw lineage and show what
+# breaks downstream. Sent in a background thread; never slows down or fails your code.
+_DB_LIN_SENT = set()
+_DB_LIN_PLAN = (_db_re.compile(r"SubqueryAlias spark_catalog\.(\w+)\.(\w+)"), _db_re.compile(r"Relation (?:spark_catalog\.)?(\w+)\.(\w+)\["),
+                _db_re.compile(r"HiveTableRelation \[`(\w+)`\.`(\w+)`"))
+_DB_LIN_WRITE = _db_re.compile(r"^\s*(?:insert\s+(?:into|overwrite)(?:\s+table)?|merge\s+into|update|delete\s+from|"
+                               r"create\s+(?:or\s+replace\s+)?(?:table|view)(?:\s+if\s+not\s+exists)?|replace\s+table)\s+"
+                               r"((?:`[^`]+`|\w+)(?:\s*\.\s*(?:`[^`]+`|\w+)){0,2})", _db_re.I)
+_DB_LIN_READ = _db_re.compile(r"(?:\b(?:from|join)|\bmerge\s+into\s+\S+(?:\s+(?:as\s+)?\w+)?\s+using)\s+((?:`[^`]+`|[A-Za-z_]\w*)(?:\s*\.\s*(?:`[^`]+`|[A-Za-z_]\w*)){0,2})(?!\s*\()", _db_re.I)
+
+
+def _db_lin_norm(raw):
+    parts = [p.strip().strip("`").lower() for p in str(raw).split(".")]
+    parts = parts[-2:]
+    return ".".join(parts) if len(parts) == 2 else f"default.{parts[0]}"
+
+
+def _db_lin_send(reads, writes, op):
+    reads = sorted({r for r in reads if r and r not in writes})
+    writes = sorted(set(writes))
+    if not reads and not writes:
+        return
+    key = (tuple(reads), tuple(writes))
+    if not writes and key in _DB_LIN_SENT:
+        return
+    _DB_LIN_SENT.add(key)
+    body = {"reads": reads, "writes": writes, "op": op, "notebook": _db_os.getenv("DATABRIDGE_NOTEBOOK_PATH", ""),
+            "job": _db_os.getenv("DATABRIDGE_JOB_NAME", ""), "kernel": _db_os.getenv("DATABRIDGE_KERNEL_LABEL", ""),
+            "user": _db_os.getenv("DATABRIDGE_USER", "") or _db_os.getenv("DATABRIDGE_CLUSTER_USER", "")}
+
+    def _post():
+        try:
+            _db_http("POST", "/api/lineage/events", body, timeout=10)
+        except Exception:  # noqa: BLE001
+            pass
+    import threading
+    threading.Thread(target=_post, daemon=True).start()
+
+
+def _db_lin_df_tables(df):
+    out = set()
+    try:
+        plan = df._jdf.queryExecution().analyzed().toString()
+        for rx in _DB_LIN_PLAN:
+            out.update(f"{a}.{b}".lower() for a, b in rx.findall(plan))
+        if not out and "Relation [" in plan:              # a file read: spark.read.parquet(path)
+            files = df.inputFiles()[:1]
+            if files:
+                out.add("path:" + files[0].rsplit("/", 1)[0])
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def _db_lin_sql(text):
+    try:
+        blank = _db_re.sub(r"'(?:[^'\\]|\\.)*'", "''", text)
+        ctes = {x.lower() for x in _db_re.findall(r"(?:\bwith|,)\s*([A-Za-z_]\w*)\s+as\s*\(", blank, _db_re.I)}
+        w = _DB_LIN_WRITE.match(blank)
+        writes = [_db_lin_norm(w.group(1))] if w else []
+        reads = [_db_lin_norm(r) for r in _DB_LIN_READ.findall(blank) if "." in r or r.strip("`").lower() not in ctes]
+        if writes or reads:
+            _db_lin_send(reads, writes, "sql")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+try:
+    from pyspark.sql import DataFrameWriter as _DbW2, SparkSession as _DbSS
+    if not getattr(_DbSS, "_databridge_lineage", False):
+        _db_lin_sql_orig, _db_lin_table_orig = _DbSS.sql, _DbSS.table
+        _db_lin_save_orig, _db_lin_insert_orig = _DbW2.saveAsTable, _DbW2.insertInto
+
+        def _db_lin_sql_patch(self, sqlQuery, *a, **k):
+            res = _db_lin_sql_orig(self, sqlQuery, *a, **k)
+            _db_lin_sql(sqlQuery)
+            return res
+
+        def _db_lin_table_patch(self, tableName):
+            res = _db_lin_table_orig(self, tableName)
+            _db_lin_send([_db_lin_norm(tableName)], [], "read")
+            return res
+
+        def _db_lin_save_patch(self, name, *a, **k):
+            res = _db_lin_save_orig(self, name, *a, **k)
+            _db_lin_send(_db_lin_df_tables(self._df), [_db_lin_norm(name)], "saveAsTable")
+            return res
+
+        def _db_lin_insert_patch(self, tableName, *a, **k):
+            res = _db_lin_insert_orig(self, tableName, *a, **k)
+            _db_lin_send(_db_lin_df_tables(self._df), [_db_lin_norm(tableName)], "insertInto")
+            return res
+
+        _DbSS.sql, _DbSS.table = _db_lin_sql_patch, _db_lin_table_patch
+        _DbW2.saveAsTable, _DbW2.insertInto = _db_lin_save_patch, _db_lin_insert_patch
+        try:
+            from pyspark.sql.readwriter import DataFrameWriterV2 as _DbWV2
+            _db_lin_v2_init = _DbWV2.__init__
+
+            def _db_lin_v2_init_patch(self, df, table):
+                _db_lin_v2_init(self, df, table)
+                self._db_table, self._db_df = table, df
+            _DbWV2.__init__ = _db_lin_v2_init_patch
+            for _m in ("append", "overwrite", "overwritePartitions", "create", "replace", "createOrReplace"):
+                def _mk(orig, m=_m):
+                    def f(self, *a, **k):
+                        res = orig(self, *a, **k)
+                        _db_lin_send(_db_lin_df_tables(self._db_df), [_db_lin_norm(self._db_table)], f"writeTo.{m}")
+                        return res
+                    return f
+                setattr(_DbWV2, _m, _mk(getattr(_DbWV2, _m)))
+        except Exception:  # noqa: BLE001
+            pass
+        try:   # Delta Lake Python API: DeltaTable.forName(spark, "db.t").merge(source_df, ...)
+            from delta.tables import DeltaTable as _DbDT
+            _db_lin_forname = _DbDT.forName.__func__ if hasattr(_DbDT.forName, "__func__") else None
+            if _db_lin_forname:
+                @classmethod
+                def _db_lin_forname_patch(cls, sparkSession, tableOrViewName):
+                    dt = _db_lin_forname(cls, sparkSession, tableOrViewName)
+                    dt._db_table = tableOrViewName
+                    return dt
+                _DbDT.forName = _db_lin_forname_patch
+                _db_lin_merge = _DbDT.merge
+
+                def _db_lin_merge_patch(self, source, condition):
+                    b = _db_lin_merge(self, source, condition)
+                    if getattr(self, "_db_table", None):
+                        _db_lin_send(_db_lin_df_tables(source), [_db_lin_norm(self._db_table)], "merge")
+                    return b
+                _DbDT.merge = _db_lin_merge_patch
+        except Exception:  # noqa: BLE001
+            pass
+        _DbSS._databridge_lineage = True
+except Exception:  # noqa: BLE001
+    pass
+
+
+# ---------------------------------------------------------------- dbutils.quality (Catalog › table › Quality)
+class DataQualityError(Exception):
+    pass
+
+
+class _DbQuality:
+    def check(self, table, fail=True, quiet=False):
+        """Run the table's data quality rules. With fail=True a failing "fail" rule raises DataQualityError (a job task fails)."""
+        r = _db_http("POST", "/api/quality/run", {"object": table, "trigger": "notebook"}, timeout=1800)
+        if not quiet:
+            for x in r.get("results") or []:
+                mark = {"pass": "✓", "warn": "!", "fail": "✗", "error": "✗"}.get(x["status"], "?")
+                extra = f" — {x['bad']} bad row(s)" if x.get("bad") else (f" — {x['value']}" if x.get("value") is not None else "")
+                print(f"{mark} {x['name']}{extra}")
+            print(f"Data quality {r['status'].lower()} for {table}: {r['passed']} passed, {r['warned']} warnings, {r['failed']} failed"
+                  + (f" ({r['error']})" if r.get("error") else ""))
+        if fail and r["status"] in ("FAILED", "ERROR"):
+            raise DataQualityError(f"Data quality checks failed for {table}: " + (r.get("error") or ", ".join(
+                x["name"] for x in r.get("results") or [] if x["status"] in ("fail", "error"))))
+        return r
+
+
+try:
+    dbutils.quality = _DbQuality()
 except Exception:  # noqa: BLE001
     pass

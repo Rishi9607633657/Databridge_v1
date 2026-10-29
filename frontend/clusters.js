@@ -85,6 +85,14 @@ function clusterDialog(c, data, done) {
     const curIn = el('input', { class: 'field', value: v.currency || '₹', maxlength: 4, style: { width: '80px' } });
     const conf = el('textarea', { class: 'field mono', rows: 3, placeholder: 'spark.sql.shuffle.partitions=200' }, Object.entries(v.spark_conf || {}).map(([k, x]) => `${k}=${x}`).join('\n'));
     const est = el('p', { class: 'muted small' });
+    const pypi = el('textarea', { class: 'field mono', rows: 4, placeholder: 'xgboost==2.1.1\nscikit-learn>=1.5\nprophet' }, (v.pypi || []).join('\n'));
+    const maven = el('textarea', { class: 'field mono', rows: 4, placeholder: 'com.microsoft.azure:spark-mssql-connector_2.12:1.4.0\norg.apache.hadoop:hadoop-aws:3.3.4' }, (v.maven || []).join('\n'));
+    const initCode = el('textarea', { class: 'field mono', rows: 5, placeholder: '# runs in every notebook and job on this cluster, after Spark starts\nspark.conf.set("spark.sql.session.timeZone", "Asia/Kolkata")\nimport mlflow' }, v.init_script || '');
+    const libsBox = el('details', { class: 'cl-libs', open: !!((v.pypi || []).length || (v.maven || []).length || v.init_script) },
+      el('summary', {}, 'Libraries and startup code'),
+      el('div', { class: 'grid2' }, el('label', { class: 'lbl' }, 'Python packages (PyPI), one per line', pypi, el('span', { class: 'muted small' }, 'Installed once into a shared folder, used by notebooks, jobs and Kubernetes executors')),
+        el('label', { class: 'lbl' }, 'Spark packages (Maven), one per line', maven, el('span', { class: 'muted small' }, 'group:artifact:version — downloaded when Spark starts'))),
+      el('label', { class: 'lbl' }, 'Startup code (Python)', initCode, el('span', { class: 'muted small' }, 'Like a Databricks init script for the notebook session: register UDFs, set Spark settings, import helpers')));
     const k8sBox = el('div');
     const fillNodes = () => {
       const list = data.node_types[cloud.value] || [];
@@ -114,7 +122,7 @@ function clusterDialog(c, data, done) {
       k8sBox,
       el('div', { class: 'grid3' }, f('Driver memory', drv, 'Spark driver inside the DataBridge kernel'), f('Price per node-hour', price), f('Your markup %', markup, 'Added to cost for customer charges')),
       el('div', { class: 'grid2' }, f('Currency', curIn), f('Extra Spark settings', conf, 'key=value per line')),
-      est,
+      libsBox, est,
       el('div', { class: 'actions' }, el('button', { type: 'button', class: 'btn', onClick: () => close(null) }, 'Cancel'), el('button', { type: 'submit', class: 'btn primary' }, c && c.id ? 'Save' : 'Create cluster')));
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -122,6 +130,7 @@ function clusterDialog(c, data, done) {
         vcpu: Number(vcpu.value) || 1, memory_gb: Number(memG.value) || 1, driver_memory: drv.value, min_workers: Number(minW.value) || 0,
         max_workers: Number(maxW.value) || 1, auto_stop_minutes: Number(stop.value) || 30, node_pool: pool.value.trim() || 'spark', spot: spot.checked,
         price_per_node_hour: Number(price.value) || 0, markup_pct: Number(markup.value) || 0, currency: curIn.value || '₹',
+        pypi: pypi.value.split('\n').map((x) => x.trim()).filter(Boolean), maven: maven.value.split('\n').map((x) => x.trim()).filter(Boolean), init_script: initCode.value,
         spark_conf: Object.fromEntries(conf.value.split('\n').map((l) => l.trim()).filter((l) => l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')).trim(), l.slice(l.indexOf('=') + 1).trim()])) };
       try {
         await api(c && c.id ? `/api/clusters/${c.id}` : '/api/clusters', { method: c && c.id ? 'PUT' : 'POST', body });

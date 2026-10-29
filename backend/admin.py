@@ -29,7 +29,7 @@ SCHEMA = {
     "SIGNUP_ENABLED": ("Sign-up", "Allow sign-up from the sign-in page", "bool", "true", "People can create their own account with their work email", False),
     "SIGNUP_APPROVAL": ("Sign-up", "New accounts need admin approval", "bool", "true", "Keep on for a public URL: new accounts wait in Admin › Users until an admin approves them", False),
     "SIGNUP_ROLE": ("Sign-up", "Role for new accounts", "enum:viewer,editor", "viewer", "viewer (read-only) or editor (build and run)", False),
-    "UI_SKIN": ("Look & feel", "Design", "enum:classic,saffron,studio,midnight,ledger", "classic", "classic, saffron, studio, midnight or ledger — the look everyone sees (light/dark stays per user)", False),
+    "UI_SKIN": ("Look & feel", "Design", "enum:vivid,classic,saffron,studio,midnight,ledger", "vivid", "vivid (DataBridge AI, default), classic, saffron, studio, midnight or ledger — the look everyone sees (light/dark stays per user)", False),
     "MARKETS_START_DATE": ("Markets", "Load history from", "str", "", "YYYY-MM-DD. Empty = the last MARKETS_HISTORY_YEARS years. Used on the first run only", False),
     "MARKETS_HISTORY_YEARS": ("Markets", "Years of history on the first run", "int", "3", "3 years gives 3-year SIP returns and 1-year indicators. More years = longer first run", False),
     "MARKETS_UNIVERSE": ("Markets", "Stocks to score", "enum:nifty500,all", "nifty500", "nifty500 = NIFTY 500 companies; all = every NSE equity that passes the liquidity floor", False),
@@ -45,6 +45,49 @@ SCHEMA = {
     "DHAN_CLIENT_ID": ("Markets", "Dhan client ID", "str", "", "", False),
     "DHAN_ACCESS_TOKEN": ("Markets", "Dhan access token", "secret", "", "", False),
     "SESSION_HOURS": ("Server", "Sign-in lasts (hours)", "int", "12", "", True),
+    "PUBLIC_URL": ("Server", "Public URL", "url", "", "https://analytics.example.com — used for links in e-mails and for Microsoft / Google sign-in", False),
+    "SMTP_HOST": ("Notifications", "SMTP server", "str", "", "e.g. smtp.office365.com, smtp.gmail.com, email-smtp.ap-south-1.amazonaws.com. Empty = no e-mail", False),
+    "SMTP_PORT": ("Notifications", "SMTP port", "int", "587", "587 (STARTTLS) or 465 (SSL)", False),
+    "SMTP_SECURITY": ("Notifications", "SMTP security", "enum:starttls,ssl,none", "starttls", "", False),
+    "SMTP_USER": ("Notifications", "SMTP user", "str", "", "", False),
+    "SMTP_PASSWORD": ("Notifications", "SMTP password", "secret", "", "For Gmail / Microsoft 365 use an app password", False),
+    "SMTP_FROM": ("Notifications", "From address", "str", "", "e.g. alerts@yourcompany.com (empty = SMTP user)", False),
+    "SMTP_FROM_NAME": ("Notifications", "From name", "str", "DataBridge", "", False),
+    "NOTIFY_SLACK_WEBHOOK": ("Notifications", "Slack webhook (default channel)", "secret", "", "Slack › Apps › Incoming Webhooks › Add to channel", False),
+    "NOTIFY_TEAMS_WEBHOOK": ("Notifications", "Teams webhook (default channel)", "secret", "", "Teams channel › Workflows › “Post to a channel when a webhook request is received”", False),
+    "BUDGET_CHECK_SECONDS": ("Notifications", "Check budgets every (seconds)", "int", "300", "", True),
+    "INVOICE_FROM_NAME": ("Invoices", "Your company name", "str", "", "Printed on customer invoices", False),
+    "INVOICE_FROM_ADDRESS": ("Invoices", "Your address", "str", "", "Use \\n for new lines", False),
+    "INVOICE_TAX_LABEL": ("Invoices", "Tax name", "str", "GST", "", False),
+    "INVOICE_TAX_ID": ("Invoices", "Your tax ID (GSTIN)", "str", "", "", False),
+    "INVOICE_TAX_PCT": ("Invoices", "Tax %", "str", "18", "0 = no tax line", False),
+    "INVOICE_NOTE": ("Invoices", "Note on invoices", "str", "", "e.g. payment terms, bank details", False),
+    "SSO_MICROSOFT_CLIENT_ID": ("Single sign-on", "Microsoft: application (client) ID", "str", "", "Entra ID › App registrations › New registration. Redirect URI (Web): <Public URL>/api/auth/sso/microsoft/callback", False),
+    "SSO_MICROSOFT_CLIENT_SECRET": ("Single sign-on", "Microsoft: client secret", "secret", "", "App registration › Certificates & secrets › New client secret", False),
+    "SSO_MICROSOFT_TENANT": ("Single sign-on", "Microsoft: tenant", "str", "organizations", "Your Directory (tenant) ID to allow only your organisation; 'organizations' = any work account", False),
+    "SSO_MICROSOFT_ALLOWED_TENANTS": ("Single sign-on", "Microsoft: allowed tenant IDs", "str", "", "With tenant = organizations: comma-separated tenant IDs of customers allowed to sign in", False),
+    "SSO_GOOGLE_CLIENT_ID": ("Single sign-on", "Google: client ID", "str", "", "Google Cloud › APIs & Services › Credentials › OAuth client (Web). Redirect URI: <Public URL>/api/auth/sso/google/callback", False),
+    "SSO_GOOGLE_CLIENT_SECRET": ("Single sign-on", "Google: client secret", "secret", "", "", False),
+    "SSO_OIDC_NAME": ("Single sign-on", "Other provider: button name", "str", "Single sign-on", "e.g. Okta, Keycloak", False),
+    "SSO_OIDC_ISSUER": ("Single sign-on", "Other provider: issuer URL", "url", "", "e.g. https://yourco.okta.com or https://keycloak.example.com/realms/main", False),
+    "SSO_OIDC_CLIENT_ID": ("Single sign-on", "Other provider: client ID", "str", "", "Redirect URI: <Public URL>/api/auth/sso/oidc/callback", False),
+    "SSO_OIDC_CLIENT_SECRET": ("Single sign-on", "Other provider: client secret", "secret", "", "", False),
+    "SSO_ALLOWED_DOMAINS": ("Single sign-on", "Allowed e-mail domains", "str", "", "Comma separated, e.g. acme.com, acme.in. Needed for automatic accounts with Google or other providers", False),
+    "SSO_AUTO_CREATE": ("Single sign-on", "Create accounts on first sign-in", "bool", "true", "Off: only people an admin added (matched by e-mail) can sign in", False),
+    "SSO_DEFAULT_ROLE": ("Single sign-on", "Role for new accounts", "enum:viewer,editor", "viewer", "", False),
+    "SSO_APPROVAL": ("Single sign-on", "New SSO accounts need admin approval", "bool", "false", "", False),
+    "SSO_ONLY": ("Single sign-on", "Company sign-in only", "bool", "false", "Turn off password sign-in for everyone except admins", False),
+    "ODATA_PAGE_SIZE": ("BI tools", "Rows per page in the OData feed", "int", "5000", "Power BI and Excel follow the next-page links automatically", False),
+    "FILE_TRIGGER_SECONDS": ("Jobs", "Check watched folders every (seconds)", "int", "60", "For jobs that run when new files arrive", True),
+    "S3_ACCESS_KEY": ("Storage", "S3 / OCI access key", "str", "", "For s3a:// tables and watched s3:// folders. On EKS prefer an IAM role (leave empty)", True),
+    "S3_SECRET_KEY": ("Storage", "S3 / OCI secret key", "secret", "", "", True),
+    "S3_ENDPOINT": ("Storage", "S3 endpoint (OCI / MinIO)", "url", "", "OCI: https://<namespace>.compat.objectstorage.<region>.oraclecloud.com. Empty for AWS", True),
+    "SPARK_EXTRA_PACKAGES": ("Storage", "Extra Spark packages", "str", "", "Maven coordinates, comma separated, e.g. org.apache.hadoop:hadoop-aws:3.3.4 for s3a://", True),
+    "ML_ENABLED": ("Machine learning", "MLflow", "enum:auto,true,false", "auto", "auto = on when the mlflow package is installed", True),
+    "MLFLOW_PORT": ("Machine learning", "MLflow tracking server port", "int", "5055", "Local port (127.0.0.1) — DataBridge serves the MLflow UI at /mlflow/", True),
+    "MLFLOW_SERVING_PORT_START": ("Machine learning", "First port for serving endpoints", "int", "5100", "Each endpoint gets the next free local port", True),
+    "GOVERNANCE_REQUIRE_GRANTS": ("Governance", "Require table grants", "bool", "false", "On: editors and viewers can only query tables granted to them in Governance › Permissions. Masks and row filters always apply", False),
+    "GOVERNANCE_MASK_SALT": ("Governance", "Hash mask salt", "secret", "", "Optional. Empty = a random salt stored on this server. Changing it changes every hashed value", False),
     "KERNEL_IDLE_MINUTES": ("Server", "Stop idle kernels after (minutes)", "int", "60", "0 = never. Frees RAM and database connections", False),
     "DATAHUB_REALTIME_MIN_SECONDS": ("Data Hub", "Fastest real-time sync (seconds)", "int", "15", "Lowest interval a real-time sync may use. Each run reads the source again, so keep it reasonable for big tables", False),
     "DATAHUB_WATCH_SECONDS": ("Data Hub", "Check folders for new files every (seconds)", "int", "30", "For syncs triggered “When new files arrive” (folder / SFTP)", False),
@@ -264,6 +307,16 @@ def runtime_checks():
     free = shutil.disk_usage(DATA_ROOT).free / 1e9
     out.append(_check("disk", "Runtime", "Free disk space", "ok" if free > 10 else "warn", f"{free:.1f} GB free",
                       "" if free > 10 else "Free up disk space (Spark and Delta need room)"))
+    try:                                         # update.ps1 never overwrites spark_init.py, so it can fall behind
+        from .settings import settings as _st
+        init = _st.spark_init_file.read_text(encoding="utf-8") if _st.spark_init_file.exists() else ""
+        latest = _st.spark_init_file.with_name("spark_init.latest.py")
+        old_init = bool(init) and "SPARK_EXTRA_PACKAGES" not in init
+        out.append(_check("spark_init", "Runtime", "config/spark_init.py", "warn" if old_init else "ok",
+                          "older version: cluster Maven libraries and S3 / OCI storage keys are not applied" if old_init else "up to date",
+                          (f"Copy {latest.name} over spark_init.py (keep your own changes)" if latest.exists() else "Update spark_init.py from the latest release") if old_init else ""))
+    except Exception:  # noqa: BLE001
+        pass
     return out
 
 

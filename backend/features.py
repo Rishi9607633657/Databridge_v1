@@ -32,6 +32,12 @@ REGISTRY = [
     ("dashboards_present", "Present with AI", "Analyze", "AI slide presentation of a dashboard", [r"^/api/dashboards/[^/]+/story$", r"^/api/tts"]),
     ("markets", "Markets pack", "Analyze", "Indian stocks, mutual funds and forex: install and run", [r"^/api/markets/"]),
     ("logs", "Logs", "Operate", "Server, Spark, job and pipeline logs", [r"^/api/logs"]),
+    ("alerts", "SQL alerts", "Analyze", "Alerts on query results by e-mail, Slack or Teams", [r"^/api/alerts"]),
+    ("ask_data", "Ask data", "Analyze", "Questions in plain English answered with SQL", [r"^/api/ask"]),
+    ("ml", "Machine learning", "Develop", "MLflow experiments, model registry and serving endpoints", [r"^/api/ml/"]),
+    ("quality", "Data quality", "Data", "Quality rules and checks on tables", [r"^/api/quality/"]),
+    ("lineage", "Lineage", "Data", "Table lineage and impact analysis", [r"^/api/lineage/(graph|impact)"]),
+    ("bi_endpoint", "BI tools endpoint", "Analyze", "OData feed and query URL for Power BI, Excel, Tableau", [r"^/api/odata", r"^/api/bi/"]),
 ]
 KEYS = [r[0] for r in REGISTRY]
 _PATTERNS = [(k, [re.compile(p) for p in pats]) for k, _, _, _, pats in REGISTRY]

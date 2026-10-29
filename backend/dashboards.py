@@ -19,6 +19,7 @@ from .kernels import SqlError, run_sql
 
 DASH_KERNEL = "__dashboards__"
 MAX_ROWS = 5000
+MAX_BIG = 60_000          # a dataset may ask for more rows ("maxRows"): the day-by-location summaries of an Overview
 CACHE: dict = {}          # key -> (time, result)
 CACHE_LIMIT = 200
 
@@ -47,7 +48,10 @@ def list_dashboards():
         d = _out(r)
         out.append({"id": d["id"], "name": d["name"], "description": d["description"], "owner": d["owner"],
                     "updated": d["updated"], "widgets": len(d["definition"].get("widgets") or []),
-                    "datasets": len(d["definition"].get("datasets") or [])})
+                    "datasets": len(d["definition"].get("datasets") or []), "pages": len(d["definition"].get("pages") or []) or 1,
+                    "look": d["definition"].get("look") or "clean", "dim": d["definition"].get("dim") or "2d",
+                    "kind": d["definition"].get("kind") or "dashboard",
+                    **({"table": (d["definition"].get("board") or {}).get("table")} if d["definition"].get("kind") == "overview" else {})})
     return out
 
 
@@ -123,11 +127,11 @@ def sql_params(sql):
 
 
 # ------------------------------------------------------------------ queries
-async def query(did, dataset_id, params, force=False, sql_override=None):
+async def query(did, dataset_id, params, force=False, sql_override=None, max_rows=None):
     d = get_dashboard(did)
     ds = next((x for x in d["definition"].get("datasets") or [] if x.get("id") == dataset_id), None)
     if sql_override is not None:
-        ds = {"id": "__preview__", "sql": sql_override}
+        ds = {"id": "__preview__", "sql": sql_override, "maxRows": max_rows}
     if not ds:
         raise HTTPException(404, "Dataset not found")
     used = {k: v for k, v in (params or {}).items() if k in sql_params(ds["sql"])}
@@ -139,8 +143,11 @@ async def query(did, dataset_id, params, force=False, sql_override=None):
     hit = CACHE.get(key)
     if hit and not force and _now() - hit[0] < ttl:
         return {**hit[1], "cached": True, "cachedAt": hit[0]}
+    cap = MAX_ROWS
+    if isinstance(ds.get("maxRows"), int) and ds["maxRows"] > MAX_ROWS:
+        cap = min(MAX_BIG, ds["maxRows"])
     try:
-        res = await fastsql.query(sql, MAX_ROWS, lambda: asyncio.wait_for(run_sql(sql, MAX_ROWS, key=DASH_KERNEL, label="Dashboards"), 600))
+        res = await fastsql.query(sql, cap, lambda: asyncio.wait_for(run_sql(sql, cap, key=DASH_KERNEL, label="Dashboards"), 600))
     except SqlError as e:
         raise HTTPException(400, f"{e.ename}: {str(e.evalue)[:600]}")
     except asyncio.TimeoutError:
